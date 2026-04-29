@@ -126,13 +126,13 @@ export function MonitorCredentialStatsCard({
         (sourceRaw ? authFileNameToFile.get(sourceRaw) : undefined) ??
         (sourceText ? authFileNameToFile.get(sourceText) : undefined);
 
-      const resolvedAuthIndex =
-        (matchedFile && normalizeAuthIndex(matchedFile['auth_index'] ?? matchedFile.authIndex)) ?? authIndex;
-      const authFileName = matchedFile?.name ?? null;
-
-      if (!resolvedAuthIndex && !authFileName) {
+      if (!matchedFile) {
         return;
       }
+
+      const resolvedAuthIndex =
+        normalizeAuthIndex(matchedFile['auth_index'] ?? matchedFile.authIndex) ?? authIndex;
+      const authFileName = matchedFile.name ?? null;
 
       const rowKey = authFileName ? `file:${authFileName}` : `auth:${resolvedAuthIndex}`;
       const displayName = authFileName ?? resolvedAuthIndex ?? '-';
