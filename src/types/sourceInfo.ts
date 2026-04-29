@@ -7,4 +7,5 @@ export type SourceInfo = {
 export type CredentialInfo = {
   name: string;
   type: string;
+  statusMessage?: string;
 };

@@ -538,6 +538,9 @@
     color: var(--text-tertiary);
     background-color: var(--bg-secondary);
     white-space: nowrap;
+    position: sticky;
+    top: 0;
+    z-index: 2;
   }
 
   th.sortableHeader {
@@ -616,8 +619,10 @@
 // Pricing Section (80%比例)
 .pricingSection {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 16px;
+  min-height: 0;
 }
 
 .priceForm {
@@ -669,8 +674,11 @@
 
 .pricesList {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 10px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .pricesTitle {
@@ -682,8 +690,14 @@
 
 .pricesGrid {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 6px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
 }
 
 .priceItem {
@@ -739,6 +753,82 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+// Price Sync Modal
+.syncModalBody {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.syncDesc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.syncFieldGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.syncFieldLabel {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.syncFieldHint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-bottom: 2px;
+}
+
+.syncTextarea {
+  width: 100%;
+  min-height: 90px;
+  padding: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-sm;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+  box-sizing: border-box;
+
+  &:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(var(--primary-color-rgb, 59, 130, 246), 0.15);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+}
+
+.syncStatus {
+  font-size: 13px;
+  min-height: 20px;
+  line-height: 1.5;
+
+  &.syncStatusInfo {
+    color: var(--text-secondary);
+  }
+
+  &.syncStatusSuccess {
+    color: var(--success-color, #15803d);
+  }
+
+  &.syncStatusError {
+    color: var(--danger-color, #dc2626);
+  }
 }
 
 // Chart Section (80%比例)
@@ -905,8 +995,45 @@
   font-weight: 600;
 }
 
+.requestEventsFilterLabelRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 18px;
+}
+
 .requestEventsSelect {
   min-width: 180px;
+}
+
+.requestEventsAutoRefreshControls {
+  display: inline-flex;
+  align-items: center;
+  gap: $spacing-xs;
+  flex-wrap: nowrap;
+
+  :global(.form-group) {
+    margin: 0;
+  }
+}
+
+.requestEventsAutoRefreshInput {
+  width: 92px;
+  height: 40px;
+  margin: 0;
+  padding: 7px 10px;
+  line-height: 24px;
+  box-sizing: border-box;
+  font-size: 13px;
+  font-weight: 500;
+  background-color: var(--bg-primary);
+  box-shadow: var(--shadow);
+}
+
+.requestEventsCountdown {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
 }
 
 .requestEventsMeta {
@@ -967,6 +1094,90 @@
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.requestEventsResultButton {
+  appearance: none;
+  cursor: pointer;
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease,
+    box-shadow 0.16s ease;
+
+  &:hover {
+    opacity: 0.9;
+  }
+
+  &:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--primary-color);
+  }
+}
+
+.requestEventsFailureModalBody {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-md;
+}
+
+.requestEventsFailureMeta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: $spacing-sm;
+
+  > div {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  @include mobile {
+    grid-template-columns: 1fr;
+  }
+}
+
+.requestEventsFailureMetaLabel {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.requestEventsFailureCredentialRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.requestEventsFailureMetaValue {
+  padding: 8px 10px;
+  border-radius: $radius-md;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.requestEventsFailureMessageBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.requestEventsFailureMessage {
+  padding: $spacing-sm;
+  border-radius: $radius-md;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+}
+
+.requestEventsFailureNote {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
 }
 
 .chartLineHeader {

@@ -1,9 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Input } from '@/components/ui/Input';
+import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
+import { getAuthFileStatusMessage } from '@/features/authFiles/constants';
+import { useInterval } from '@/hooks/useInterval';
 import { authFilesApi } from '@/services/api/authFiles';
 import type { GeminiKeyConfig, ProviderKeyConfig, OpenAIProviderConfig } from '@/types';
 import type { AuthFileItem } from '@/types/authFile';
@@ -15,13 +19,14 @@ import {
   extractLatencyMs,
   extractTotalTokens,
   formatDurationMs,
-  LATENCY_SOURCE_FIELD,
   normalizeAuthIndex,
 } from '@/utils/usage';
 import { downloadBlob } from '@/utils/download';
 import styles from '@/pages/UsagePage.module.scss';
 
 const ALL_FILTER = '__all__';
+const RESULT_SUCCESS_FILTER = 'success';
+const RESULT_FAILURE_FILTER = 'failure';
 const MAX_RENDERED_EVENTS = 500;
 
 type RequestEventRow = {
@@ -37,6 +42,7 @@ type RequestEventRow = {
   authIndex: string;
   failed: boolean;
   latencyMs: number | null;
+  tps: number | null;
   inputTokens: number;
   outputTokens: number;
   reasoningTokens: number;
@@ -52,12 +58,40 @@ export interface RequestEventsDetailsCardProps {
   codexConfigs: ProviderKeyConfig[];
   vertexConfigs: ProviderKeyConfig[];
   openaiProviders: OpenAIProviderConfig[];
+  authFiles?: AuthFileItem[];
+  onRefresh?: () => Promise<void> | void;
+  lastRefreshedAt?: Date | null;
 }
+
+const AUTO_REFRESH_OFF = 'off';
+const AUTO_REFRESH_CUSTOM = 'custom';
+const AUTO_REFRESH_INTERVALS = {
+  '15s': 15_000,
+  '30s': 30_000,
+  '1m': 60_000,
+  '5m': 300_000,
+} as const;
+const MIN_CUSTOM_AUTO_REFRESH_SECONDS = 5;
+const MAX_CUSTOM_AUTO_REFRESH_SECONDS = 3600;
+const DEFAULT_CUSTOM_AUTO_REFRESH_SECONDS = 60;
+
+type AutoRefreshValue =
+  | keyof typeof AUTO_REFRESH_INTERVALS
+  | typeof AUTO_REFRESH_OFF
+  | typeof AUTO_REFRESH_CUSTOM;
 
 const toNumber = (value: unknown): number => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 0;
   return parsed;
+};
+
+const normalizeCustomAutoRefreshSeconds = (value: unknown): number => {
+  const parsed = Math.floor(Number(value));
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_CUSTOM_AUTO_REFRESH_SECONDS;
+  }
+  return Math.min(Math.max(parsed, MIN_CUSTOM_AUTO_REFRESH_SECONDS), MAX_CUSTOM_AUTO_REFRESH_SECONDS);
 };
 
 const encodeCsv = (value: string | number): string => {
@@ -75,42 +109,64 @@ export function RequestEventsDetailsCard({
   codexConfigs,
   vertexConfigs,
   openaiProviders,
+  authFiles,
+  onRefresh,
+  lastRefreshedAt,
 }: RequestEventsDetailsCardProps) {
   const { t, i18n } = useTranslation();
-  const latencyHint = t('usage_stats.latency_unit_hint', {
-    field: LATENCY_SOURCE_FIELD,
-    unit: t('usage_stats.duration_unit_ms'),
-  });
 
   const [modelFilter, setModelFilter] = useState(ALL_FILTER);
   const [sourceFilter, setSourceFilter] = useState(ALL_FILTER);
   const [authIndexFilter, setAuthIndexFilter] = useState(ALL_FILTER);
-  const [authFileMap, setAuthFileMap] = useState<Map<string, CredentialInfo>>(new Map());
+  const [resultFilter, setResultFilter] = useState(ALL_FILTER);
+  const [autoRefreshValue, setAutoRefreshValue] = useState<AutoRefreshValue>(AUTO_REFRESH_OFF);
+  const [customAutoRefreshSeconds, setCustomAutoRefreshSeconds] = useState(
+    DEFAULT_CUSTOM_AUTO_REFRESH_SECONDS.toString()
+  );
+  const [localAuthFiles, setLocalAuthFiles] = useState<AuthFileItem[]>([]);
+  const [selectedFailureRow, setSelectedFailureRow] = useState<RequestEventRow | null>(null);
+  const [nextRefreshAtMs, setNextRefreshAtMs] = useState<number | null>(null);
+  const [countdownNowMs, setCountdownNowMs] = useState(() => Date.now());
+
+  const resolvedAuthFiles = authFiles ?? localAuthFiles;
+
+  const refreshAuthFiles = useCallback(async () => {
+    if (authFiles) return;
+    try {
+      const res = await authFilesApi.list();
+      const files = Array.isArray(res) ? res : (res as { files?: AuthFileItem[] })?.files;
+      if (!Array.isArray(files)) return;
+      setLocalAuthFiles(files);
+    } catch {
+      // Ignore auth file refresh failures.
+    }
+  }, [authFiles]);
 
   useEffect(() => {
-    let cancelled = false;
-    authFilesApi
-      .list()
-      .then((res) => {
-        if (cancelled) return;
-        const files = Array.isArray(res) ? res : (res as { files?: AuthFileItem[] })?.files;
-        if (!Array.isArray(files)) return;
-        const map = new Map<string, CredentialInfo>();
-        files.forEach((file) => {
-          const key = normalizeAuthIndex(file['auth_index'] ?? file.authIndex);
-          if (!key) return;
-          map.set(key, {
-            name: file.name || key,
-            type: (file.type || file.provider || '').toString(),
-          });
-        });
-        setAuthFileMap(map);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    if (authFiles) return;
+    void refreshAuthFiles();
+  }, [authFiles, refreshAuthFiles]);
+
+  useEffect(() => {
+    if (authFiles || !lastRefreshedAt) {
+      return;
+    }
+    void refreshAuthFiles();
+  }, [authFiles, lastRefreshedAt, refreshAuthFiles]);
+
+  const authFileMap = useMemo(() => {
+    const map = new Map<string, CredentialInfo>();
+    resolvedAuthFiles.forEach((file) => {
+      const key = normalizeAuthIndex(file['auth_index'] ?? file.authIndex);
+      if (!key) return;
+      map.set(key, {
+        name: file.name || key,
+        type: (file.type || file.provider || '').toString(),
+        statusMessage: getAuthFileStatusMessage(file),
+      });
+    });
+    return map;
+  }, [resolvedAuthFiles]);
 
   const sourceInfoMap = useMemo(
     () =>
@@ -123,6 +179,70 @@ export function RequestEventsDetailsCard({
       }),
     [claudeConfigs, codexConfigs, geminiKeys, openaiProviders, vertexConfigs]
   );
+
+  const autoRefreshOptions = useMemo(
+    () => [
+      { value: AUTO_REFRESH_OFF, label: t('monitoring_center.auto_refresh_off') },
+      { value: '15s', label: '15s' },
+      { value: '30s', label: '30s' },
+      { value: '1m', label: '1m' },
+      { value: '5m', label: '5m' },
+      { value: AUTO_REFRESH_CUSTOM, label: t('monitoring_center.auto_refresh_custom') }
+    ],
+    [t]
+  );
+  const normalizedCustomAutoRefreshSeconds = useMemo(
+    () => normalizeCustomAutoRefreshSeconds(customAutoRefreshSeconds),
+    [customAutoRefreshSeconds]
+  );
+  const autoRefreshDelay = useMemo(() => {
+    if (!onRefresh || autoRefreshValue === AUTO_REFRESH_OFF) {
+      return null;
+    }
+    if (autoRefreshValue === AUTO_REFRESH_CUSTOM) {
+      return normalizedCustomAutoRefreshSeconds * 1000;
+    }
+    return AUTO_REFRESH_INTERVALS[autoRefreshValue];
+  }, [autoRefreshValue, normalizedCustomAutoRefreshSeconds, onRefresh]);
+
+  useEffect(() => {
+    if (!autoRefreshDelay) {
+      setNextRefreshAtMs(null);
+      return;
+    }
+
+    const now = Date.now();
+    setCountdownNowMs(now);
+
+    const nextFromRefresh = lastRefreshedAt ? lastRefreshedAt.getTime() + autoRefreshDelay : null;
+    const nextRefreshAt =
+      nextFromRefresh && nextFromRefresh > now ? nextFromRefresh : now + autoRefreshDelay;
+
+    setNextRefreshAtMs(nextRefreshAt);
+  }, [autoRefreshDelay, lastRefreshedAt]);
+
+  useInterval(() => {
+    setCountdownNowMs(Date.now());
+  }, autoRefreshDelay ? 1000 : null);
+
+  const handleCustomAutoRefreshSecondsChange = useCallback((value: string) => {
+    setCustomAutoRefreshSeconds(value.replace(/\D/g, ''));
+  }, []);
+
+  const handleCustomAutoRefreshSecondsBlur = useCallback(() => {
+    setCustomAutoRefreshSeconds(normalizeCustomAutoRefreshSeconds(customAutoRefreshSeconds).toString());
+  }, [customAutoRefreshSeconds]);
+
+  useInterval(() => {
+    if (!onRefresh || loading || !autoRefreshDelay) return;
+    setNextRefreshAtMs(Date.now() + autoRefreshDelay);
+    void onRefresh();
+  }, autoRefreshDelay);
+
+  const autoRefreshCountdown =
+    autoRefreshDelay && nextRefreshAtMs
+      ? Math.max(0, Math.ceil((nextRefreshAtMs - countdownNowMs) / 1000))
+      : null;
 
   const rows = useMemo<RequestEventRow[]>(() => {
     const details = collectUsageDetails(usage);
@@ -163,6 +283,7 @@ export function RequestEventsDetailsCard({
           extractTotalTokens(detail)
         );
         const latencyMs = extractLatencyMs(detail);
+        const tps = latencyMs && latencyMs > 0 ? outputTokens / (latencyMs / 1000) : null;
 
         return {
           id: `${timestamp}-${model}-${sourceKey}-${authIndex}-${index}`,
@@ -177,6 +298,7 @@ export function RequestEventsDetailsCard({
           authIndex,
           failed: detail.failed === true,
           latencyMs,
+          tps,
           inputTokens,
           outputTokens,
           reasoningTokens,
@@ -261,6 +383,14 @@ export function RequestEventsDetailsCard({
     ],
     [rows, t]
   );
+  const resultOptions = useMemo(
+    () => [
+      { value: ALL_FILTER, label: t('usage_stats.filter_all') },
+      { value: RESULT_SUCCESS_FILTER, label: t('stats.success') },
+      { value: RESULT_FAILURE_FILTER, label: t('stats.failure') },
+    ],
+    [t]
+  );
 
   const modelOptionSet = useMemo(
     () => new Set(modelOptions.map((option) => option.value)),
@@ -274,12 +404,17 @@ export function RequestEventsDetailsCard({
     () => new Set(authIndexOptions.map((option) => option.value)),
     [authIndexOptions]
   );
+  const resultOptionSet = useMemo(
+    () => new Set(resultOptions.map((option) => option.value)),
+    [resultOptions]
+  );
 
   const effectiveModelFilter = modelOptionSet.has(modelFilter) ? modelFilter : ALL_FILTER;
   const effectiveSourceFilter = sourceOptionSet.has(sourceFilter) ? sourceFilter : ALL_FILTER;
   const effectiveAuthIndexFilter = authIndexOptionSet.has(authIndexFilter)
     ? authIndexFilter
     : ALL_FILTER;
+  const effectiveResultFilter = resultOptionSet.has(resultFilter) ? resultFilter : ALL_FILTER;
 
   const filteredRows = useMemo(
     () =>
@@ -290,9 +425,12 @@ export function RequestEventsDetailsCard({
           effectiveSourceFilter === ALL_FILTER || row.sourceKey === effectiveSourceFilter;
         const authIndexMatched =
           effectiveAuthIndexFilter === ALL_FILTER || row.authIndex === effectiveAuthIndexFilter;
-        return modelMatched && sourceMatched && authIndexMatched;
+        const resultMatched =
+          effectiveResultFilter === ALL_FILTER ||
+          (effectiveResultFilter === RESULT_FAILURE_FILTER ? row.failed : !row.failed);
+        return modelMatched && sourceMatched && authIndexMatched && resultMatched;
       }),
-    [effectiveAuthIndexFilter, effectiveModelFilter, effectiveSourceFilter, rows]
+    [effectiveAuthIndexFilter, effectiveModelFilter, effectiveResultFilter, effectiveSourceFilter, rows]
   );
 
   const renderedRows = useMemo(() => filteredRows.slice(0, MAX_RENDERED_EVENTS), [filteredRows]);
@@ -300,12 +438,14 @@ export function RequestEventsDetailsCard({
   const hasActiveFilters =
     effectiveModelFilter !== ALL_FILTER ||
     effectiveSourceFilter !== ALL_FILTER ||
-    effectiveAuthIndexFilter !== ALL_FILTER;
+    effectiveAuthIndexFilter !== ALL_FILTER ||
+    effectiveResultFilter !== ALL_FILTER;
 
   const handleClearFilters = () => {
     setModelFilter(ALL_FILTER);
     setSourceFilter(ALL_FILTER);
     setAuthIndexFilter(ALL_FILTER);
+    setResultFilter(ALL_FILTER);
   };
 
   const handleExportCsv = () => {
@@ -318,7 +458,7 @@ export function RequestEventsDetailsCard({
       'source_raw',
       'auth_index',
       'result',
-      ...(hasLatencyData ? ['latency_ms'] : []),
+      ...(hasLatencyData ? ['latency_ms', 'tps'] : []),
       'input_tokens',
       'output_tokens',
       'reasoning_tokens',
@@ -334,7 +474,9 @@ export function RequestEventsDetailsCard({
         row.sourceRaw,
         row.authIndex,
         row.failed ? 'failed' : 'success',
-        ...(hasLatencyData ? [row.latencyMs ?? ''] : []),
+        ...(hasLatencyData
+          ? [row.latencyMs ?? '', row.tps !== null ? row.tps.toFixed(2) : '']
+          : []),
         row.inputTokens,
         row.outputTokens,
         row.reasoningTokens,
@@ -364,6 +506,7 @@ export function RequestEventsDetailsCard({
       auth_index: row.authIndex,
       failed: row.failed,
       ...(hasLatencyData && row.latencyMs !== null ? { latency_ms: row.latencyMs } : {}),
+      ...(hasLatencyData && row.tps !== null ? { tps: row.tps } : {}),
       tokens: {
         input_tokens: row.inputTokens,
         output_tokens: row.outputTokens,
@@ -380,6 +523,14 @@ export function RequestEventsDetailsCard({
       blob: new Blob([content], { type: 'application/json;charset=utf-8' }),
     });
   };
+
+  const selectedCredentialInfo = useMemo(() => {
+    if (!selectedFailureRow) return null;
+    const normalizedAuthIndex = normalizeAuthIndex(selectedFailureRow.authIndex);
+    if (!normalizedAuthIndex) return null;
+    return authFileMap.get(normalizedAuthIndex) ?? null;
+  }, [authFileMap, selectedFailureRow]);
+  const selectedFailureMessage = selectedCredentialInfo?.statusMessage?.trim() || '';
 
   return (
     <Card
@@ -453,6 +604,53 @@ export function RequestEventsDetailsCard({
             fullWidth={false}
           />
         </div>
+        <div className={styles.requestEventsFilterItem}>
+          <span className={styles.requestEventsFilterLabel}>
+            {t('usage_stats.request_events_filter_result')}
+          </span>
+          <Select
+            value={effectiveResultFilter}
+            options={resultOptions}
+            onChange={setResultFilter}
+            className={styles.requestEventsSelect}
+            ariaLabel={t('usage_stats.request_events_filter_result')}
+            fullWidth={false}
+          />
+        </div>
+        {onRefresh && (
+          <div className={styles.requestEventsFilterItem}>
+            <span className={styles.requestEventsFilterLabelRow}>
+              <span className={styles.requestEventsFilterLabel}>{t('monitoring_center.auto_refresh')}</span>
+              {autoRefreshCountdown !== null && (
+                <span className={styles.requestEventsCountdown}>
+                  {t('monitoring_center.auto_refresh_countdown', { count: autoRefreshCountdown })}
+                </span>
+              )}
+            </span>
+            <div className={styles.requestEventsAutoRefreshControls}>
+              <Select
+                value={autoRefreshValue}
+                options={autoRefreshOptions}
+                onChange={(value) => setAutoRefreshValue(value as AutoRefreshValue)}
+                className={styles.requestEventsSelect}
+                ariaLabel={t('monitoring_center.auto_refresh')}
+                fullWidth={false}
+              />
+              {autoRefreshValue === AUTO_REFRESH_CUSTOM && (
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  value={customAutoRefreshSeconds}
+                  onChange={(event) => handleCustomAutoRefreshSecondsChange(event.target.value)}
+                  onBlur={handleCustomAutoRefreshSecondsBlur}
+                  className={styles.requestEventsAutoRefreshInput}
+                  aria-label={t('monitoring_center.auto_refresh_custom_seconds')}
+                  placeholder={normalizedCustomAutoRefreshSeconds.toString()}
+                />
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {loading && rows.length === 0 ? (
@@ -471,7 +669,6 @@ export function RequestEventsDetailsCard({
         <>
           <div className={styles.requestEventsMeta}>
             <span>{t('usage_stats.request_events_count', { count: filteredRows.length })}</span>
-            {hasLatencyData && <span className={styles.requestEventsLimitHint}>{latencyHint}</span>}
             {filteredRows.length > MAX_RENDERED_EVENTS && (
               <span className={styles.requestEventsLimitHint}>
                 {t('usage_stats.request_events_limit_hint', {
@@ -491,7 +688,8 @@ export function RequestEventsDetailsCard({
                   <th>{t('usage_stats.request_events_source')}</th>
                   <th>{t('usage_stats.request_events_auth_index')}</th>
                   <th>{t('usage_stats.request_events_result')}</th>
-                  {hasLatencyData && <th title={latencyHint}>{t('usage_stats.time')}</th>}
+                  {hasLatencyData && <th>{t('usage_stats.time')}</th>}
+                  {hasLatencyData && <th>{t('usage_stats.request_events_tps')}</th>}
                   <th>{t('usage_stats.input_tokens')}</th>
                   <th>{t('usage_stats.output_tokens')}</th>
                   <th>{t('usage_stats.reasoning_tokens')}</th>
@@ -516,19 +714,23 @@ export function RequestEventsDetailsCard({
                       {row.authIndex}
                     </td>
                     <td>
-                      <span
-                        className={
-                          row.failed
-                            ? styles.requestEventsResultFailed
-                            : styles.requestEventsResultSuccess
-                        }
-                      >
-                        {row.failed ? t('stats.failure') : t('stats.success')}
-                      </span>
+                      {row.failed ? (
+                        <button
+                          type="button"
+                          className={`${styles.requestEventsResultFailed} ${styles.requestEventsResultButton}`}
+                          onClick={() => setSelectedFailureRow(row)}
+                          aria-label={t('usage_stats.request_events_failure_log_view')}
+                        >
+                          {t('stats.failure')}
+                        </button>
+                      ) : (
+                        <span className={styles.requestEventsResultSuccess}>{t('stats.success')}</span>
+                      )}
                     </td>
                     {hasLatencyData && (
                       <td className={styles.durationCell}>{formatDurationMs(row.latencyMs)}</td>
                     )}
+                    {hasLatencyData && <td>{row.tps !== null ? row.tps.toFixed(2) : '--'}</td>}
                     <td>{row.inputTokens.toLocaleString()}</td>
                     <td>{row.outputTokens.toLocaleString()}</td>
                     <td>{row.reasoningTokens.toLocaleString()}</td>
@@ -541,6 +743,56 @@ export function RequestEventsDetailsCard({
           </div>
         </>
       )}
+
+      <Modal
+        open={selectedFailureRow !== null}
+        title={t('usage_stats.request_events_failure_log_title')}
+        onClose={() => setSelectedFailureRow(null)}
+        width={560}
+      >
+        {selectedFailureRow && (
+          <div className={styles.requestEventsFailureModalBody}>
+            <div className={styles.requestEventsFailureMeta}>
+              <div>
+                <span className={styles.requestEventsFailureMetaLabel}>
+                  {t('usage_stats.request_events_failure_log_timestamp')}
+                </span>
+                <span className={styles.requestEventsFailureMetaValue}>
+                  {selectedFailureRow.timestampLabel}
+                </span>
+              </div>
+              <div>
+                <span className={styles.requestEventsFailureMetaLabel}>
+                  {t('usage_stats.request_events_failure_log_model')}
+                </span>
+                <span className={styles.requestEventsFailureMetaValue}>{selectedFailureRow.model}</span>
+              </div>
+            </div>
+
+            {selectedCredentialInfo?.name && (
+              <div className={styles.requestEventsFailureCredentialRow}>
+                <span className={styles.requestEventsFailureMetaLabel}>
+                  {t('usage_stats.request_events_failure_log_credential')}
+                </span>
+                <span className={styles.requestEventsFailureMetaValue}>{selectedCredentialInfo.name}</span>
+              </div>
+            )}
+
+            <div className={styles.requestEventsFailureMessageBlock}>
+              <div className={styles.requestEventsFailureMetaLabel}>
+                {t('usage_stats.request_events_failure_log_message_label')}
+              </div>
+              <div className={styles.requestEventsFailureMessage}>
+                {selectedFailureMessage || t('usage_stats.request_events_failure_log_empty')}
+              </div>
+            </div>
+
+            <div className={styles.requestEventsFailureNote}>
+              {t('usage_stats.request_events_failure_log_note')}
+            </div>
+          </div>
+        )}
+      </Modal>
     </Card>
   );
 }

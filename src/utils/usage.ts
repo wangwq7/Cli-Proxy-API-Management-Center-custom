@@ -103,7 +103,7 @@ export interface ModelStatsSummary {
   latencySampleCount: number;
 }
 
-export type UsageTimeRange = '7h' | '24h' | '7d' | 'all';
+export type UsageTimeRange = '7h' | '24h' | '7d' | '30d' | 'all';
 
 const TOKENS_PER_PRICE_UNIT = 1_000_000;
 const MODEL_PRICE_STORAGE_KEY = 'cli-proxy-model-prices-v2';
@@ -112,6 +112,7 @@ const USAGE_TIME_RANGE_MS: Record<Exclude<UsageTimeRange, 'all'>, number> = {
   '7h': 7 * 60 * 60 * 1000,
   '24h': 24 * 60 * 60 * 1000,
   '7d': 7 * 24 * 60 * 60 * 1000,
+  '30d': 30 * 24 * 60 * 60 * 1000,
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -1248,6 +1249,13 @@ export interface ChartData {
   datasets: ChartDataset[];
 }
 
+export interface UsageTotalsTrendData {
+  labels: string[];
+  requestSeries: number[];
+  tokenSeries: number[];
+  costSeries: number[];
+}
+
 const CHART_COLORS = [
   { borderColor: '#8b8680', backgroundColor: 'rgba(139, 134, 128, 0.15)' },
   { borderColor: '#22c55e', backgroundColor: 'rgba(34, 197, 94, 0.15)' },
@@ -1360,6 +1368,58 @@ export function buildChartData(
   });
 
   return { labels, datasets };
+}
+
+const sumModelSeries = (dataByModel: Map<string, number[]>, length: number): number[] => {
+  const totals = new Array(length).fill(0);
+  dataByModel.forEach((values) => {
+    values.forEach((value, index) => {
+      totals[index] = (totals[index] || 0) + value;
+    });
+  });
+  return totals;
+};
+
+const alignSeriesToLabels = (
+  labels: string[],
+  source: { labels: string[]; data: number[] }
+): number[] => {
+  if (labels.length === source.labels.length && labels.every((label, index) => label === source.labels[index])) {
+    return source.data;
+  }
+
+  const valueByLabel = new Map<string, number>();
+  source.labels.forEach((label, index) => {
+    valueByLabel.set(label, source.data[index] || 0);
+  });
+  return labels.map((label) => valueByLabel.get(label) || 0);
+};
+
+export function buildUsageTotalsTrend(
+  usageData: unknown,
+  modelPrices: Record<string, ModelPrice>,
+  period: 'hour' | 'day' = 'day',
+  options: { hourWindowHours?: number } = {}
+): UsageTotalsTrendData {
+  const requestBase =
+    period === 'hour'
+      ? buildHourlySeriesByModel(usageData, 'requests', options.hourWindowHours)
+      : buildDailySeriesByModel(usageData, 'requests');
+  const tokenBase =
+    period === 'hour'
+      ? buildHourlySeriesByModel(usageData, 'tokens', options.hourWindowHours)
+      : buildDailySeriesByModel(usageData, 'tokens');
+  const costBase =
+    period === 'hour'
+      ? buildHourlyCostSeries(usageData, modelPrices, options.hourWindowHours)
+      : buildDailyCostSeries(usageData, modelPrices);
+
+  return {
+    labels: requestBase.labels,
+    requestSeries: sumModelSeries(requestBase.dataByModel, requestBase.labels.length),
+    tokenSeries: sumModelSeries(tokenBase.dataByModel, tokenBase.labels.length),
+    costSeries: alignSeriesToLabels(requestBase.labels, costBase)
+  };
 }
 
 /**
