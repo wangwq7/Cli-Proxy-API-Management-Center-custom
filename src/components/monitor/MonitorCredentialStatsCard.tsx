@@ -118,8 +118,8 @@ export function MonitorCredentialStatsCard({
 }: MonitorCredentialStatsCardProps) {
   const { t } = useTranslation();
   const [refreshingKeys, setRefreshingKeys] = useState<Record<string, boolean>>({});
-  const [sortKey, setSortKey] = useState<SortKey>('displayName');
-  const [sortDir, setSortDir] = useState<SortDir>('asc');
+  const [sortKey, setSortKey] = useState<SortKey>('tokens');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [typeFilter, setTypeFilter] = useState(ALL_FILTER);
   const [searchTerm, setSearchTerm] = useState('');
   const codexQuota = useQuotaStore((state) => state.codexQuota);
