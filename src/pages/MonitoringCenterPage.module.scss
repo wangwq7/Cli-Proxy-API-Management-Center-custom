@@ -614,6 +614,11 @@
   max-width: 150px;
 }
 
+.windowUsageColumn {
+  width: 230px;
+  min-width: 230px;
+}
+
 .requestBreakdown {
   color: var(--text-secondary);
   white-space: nowrap;
@@ -751,9 +756,35 @@
   background: color-mix(in srgb, var(--danger-color) 8%, var(--bg-primary));
 }
 
-.windowCostCell {
+.windowUsageCell {
   font-variant-numeric: tabular-nums;
+}
+
+.windowUsageList {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.windowUsageRow {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
   white-space: nowrap;
+}
+
+.windowUsageLabel {
+  min-width: 54px;
+  color: var(--primary-color);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.windowUsageValue {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .fullWidthSection {

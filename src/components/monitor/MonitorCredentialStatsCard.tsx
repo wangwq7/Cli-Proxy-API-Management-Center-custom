@@ -29,9 +29,7 @@ type SortKey =
   | 'requests'
   | 'tokens'
   | 'successRate'
-  | 'cost'
-  | 'fiveHourCost'
-  | 'weeklyCost';
+  | 'cost';
 type SortDir = 'asc' | 'desc';
 
 interface MonitorCredentialStatsCardProps {
@@ -54,6 +52,14 @@ interface CredentialRow {
   cost: number;
   successRate: number;
   quotaKey: string | null;
+}
+
+interface WindowUsageStats {
+  id: string;
+  label: string;
+  resetLabel: string;
+  requests: number | null;
+  tokens: number | null;
 }
 
 type CredentialHealth = 'normal' | 'exhausted' | 'disabled';
@@ -82,11 +88,20 @@ const normalizeCredentialType = (file?: AuthFileMeta) => {
   return rawType.trim().toLowerCase() || 'unknown';
 };
 
-const toWindowCost = (endMs: number | null, windowMs: number | null) => {
+const toWindowRange = (endMs: number | null, windowMs: number | null) => {
   if (!windowMs || !endMs || !Number.isFinite(endMs) || endMs <= 0) {
     return null;
   }
   return { endMs, startMs: endMs - windowMs };
+};
+
+const getWindowDurationMs = (window: CodexQuotaState['windows'][number]) => {
+  if (typeof window.windowSeconds === 'number' && window.windowSeconds > 0) {
+    return window.windowSeconds * 1000;
+  }
+  if (window.id === 'five-hour') return 5 * 60 * 60 * 1000;
+  if (window.id === 'weekly') return 7 * 24 * 60 * 60 * 1000;
+  return null;
 };
 
 const getCredentialHealth = (file?: AuthFileMeta): CredentialHealth => {
@@ -302,9 +317,9 @@ export function MonitorCredentialStatsCard({
     [authFiles, resolveQuotaKey, setCodexQuota, t]
   );
 
-  const rowCosts = useMemo(() => {
+  const rowEvents = useMemo(() => {
     const details = collectUsageDetails(usage);
-    const buckets = new Map<string, Array<{ timestampMs: number; cost: number }>>();
+    const buckets = new Map<string, Array<{ timestampMs: number; tokens: number }>>();
 
     rows.forEach((row) => {
       buckets.set(row.key, []);
@@ -323,44 +338,60 @@ export function MonitorCredentialStatsCard({
       if (!row) return;
       const timestampMs = detail.__timestampMs ?? Date.parse(detail.timestamp);
       if (!Number.isFinite(timestampMs) || timestampMs <= 0) return;
-      buckets.get(row.key)?.push({ timestampMs, cost: calculateCost(detail, modelPrices) });
+      buckets.get(row.key)?.push({ timestampMs, tokens: extractTotalTokens(detail) });
     });
 
     return buckets;
-  }, [modelPrices, rows, usage]);
+  }, [rows, usage]);
 
-  const windowCosts = useMemo(() => {
-    const result = new Map<string, { fiveHourCost: number | null; weeklyCost: number | null }>();
+  const windowUsage = useMemo(() => {
+    const result = new Map<string, WindowUsageStats[]>();
 
     rows.forEach((row) => {
       const quotaKey = resolveQuotaKey(row);
       const quotaState = quotaKey ? (codexQuota[quotaKey] as CodexQuotaState | undefined) : undefined;
-      const events = rowCosts.get(row.key) ?? [];
-      const fiveHourWindow = quotaState?.windows?.find((window) => window.id === 'five-hour');
-      const weeklyWindow = quotaState?.windows?.find((window) => window.id === 'weekly');
-      const fiveHourInfo = toWindowCost(
-        fiveHourWindow?.resetAtUnix ? fiveHourWindow.resetAtUnix * 1000 : null,
-        5 * 60 * 60 * 1000
-      );
-      const weeklyInfo = toWindowCost(
-        weeklyWindow?.resetAtUnix ? weeklyWindow.resetAtUnix * 1000 : null,
-        7 * 24 * 60 * 60 * 1000
-      );
+      const events = rowEvents.get(row.key) ?? [];
+      const stats = (quotaState?.windows ?? [])
+        .filter((window) => window.id === 'five-hour' || window.id === 'weekly')
+        .map((window) => {
+          const range = toWindowRange(
+            window.resetAtUnix ? window.resetAtUnix * 1000 : null,
+            getWindowDurationMs(window)
+          );
+          const label = window.labelKey ? t(window.labelKey, window.labelParams ?? {}) : window.label;
+          if (!range) {
+            return {
+              id: window.id,
+              label,
+              resetLabel: window.resetLabel,
+              requests: null,
+              tokens: null
+            };
+          }
+          const totals = events.reduce(
+            (sum, item) => {
+              if (item.timestampMs >= range.startMs && item.timestampMs <= range.endMs) {
+                sum.requests += 1;
+                sum.tokens += item.tokens;
+              }
+              return sum;
+            },
+            { requests: 0, tokens: 0 }
+          );
+          return {
+            id: window.id,
+            label,
+            resetLabel: window.resetLabel,
+            requests: totals.requests,
+            tokens: totals.tokens
+          };
+        });
 
-      const sumInWindow = (startMs: number, endMs: number) =>
-        events.reduce(
-          (sum, item) => (item.timestampMs >= startMs && item.timestampMs <= endMs ? sum + item.cost : sum),
-          0
-        );
-
-      result.set(row.key, {
-        fiveHourCost: fiveHourInfo ? sumInWindow(fiveHourInfo.startMs, fiveHourInfo.endMs) : null,
-        weeklyCost: weeklyInfo ? sumInWindow(weeklyInfo.startMs, weeklyInfo.endMs) : null
-      });
+      result.set(row.key, stats);
     });
 
     return result;
-  }, [codexQuota, resolveQuotaKey, rowCosts, rows]);
+  }, [codexQuota, resolveQuotaKey, rowEvents, rows, t]);
 
   const handleSort = useCallback(
     (key: SortKey) => {
@@ -376,19 +407,12 @@ export function MonitorCredentialStatsCard({
 
   const getSortValue = useCallback(
     (row: CredentialRow, key: SortKey) => {
-      const costs = windowCosts.get(row.key);
       if (key === 'displayName') {
         return row.displayName;
       }
-      if (key === 'fiveHourCost') {
-        return costs?.fiveHourCost ?? -1;
-      }
-      if (key === 'weeklyCost') {
-        return costs?.weeklyCost ?? -1;
-      }
       return row[key];
     },
-    [windowCosts]
+    []
   );
 
   const sortedRows = useMemo(() => {
@@ -476,6 +500,9 @@ export function MonitorCredentialStatsCard({
                       </button>
                     </th>
                     <th className={styles.credentialActionHeader}></th>
+                    <th className={styles.windowUsageColumn}>
+                      {t('monitoring_center.window_usage', { defaultValue: '窗口用量' })}
+                    </th>
                     <th className={`${styles.sortableHeader} ${styles.metricColumn}`} aria-sort={ariaSort('requests')}>
                       <button
                         type="button"
@@ -512,24 +539,6 @@ export function MonitorCredentialStatsCard({
                         {t('usage_stats.total_cost')}{arrow('cost')}
                       </button>
                     </th>
-                    <th className={`${styles.sortableHeader} ${styles.metricColumn}`} aria-sort={ariaSort('fiveHourCost')}>
-                      <button
-                        type="button"
-                        className={styles.sortHeaderButton}
-                        onClick={() => handleSort('fiveHourCost')}
-                      >
-                        {t('monitoring_center.credential_cost_5h')}{arrow('fiveHourCost')}
-                      </button>
-                    </th>
-                    <th className={`${styles.sortableHeader} ${styles.metricColumn}`} aria-sort={ariaSort('weeklyCost')}>
-                      <button
-                        type="button"
-                        className={styles.sortHeaderButton}
-                        onClick={() => handleSort('weeklyCost')}
-                      >
-                        {t('monitoring_center.credential_cost_7d')}{arrow('weeklyCost')}
-                      </button>
-                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -549,9 +558,8 @@ export function MonitorCredentialStatsCard({
                             : null,
                         resetLabel: window.resetLabel
                       }));
-                    const quotaCosts = windowCosts.get(row.key);
+                    const windowStats = windowUsage.get(row.key) ?? [];
                     const isRefreshing = resolvedQuotaKey ? refreshingKeys[resolvedQuotaKey] === true : false;
-                    const hasFiveHourWindow = (quotaState?.windows ?? []).some((window) => window.id === 'five-hour');
                     return (
                       <tr key={row.key}>
                         <td className={styles.modelCell}>
@@ -608,6 +616,31 @@ export function MonitorCredentialStatsCard({
                             </div>
                           ) : null}
                         </td>
+                        <td className={styles.windowUsageCell}>
+                          {windowStats.length > 0 ? (
+                            <div className={styles.windowUsageList}>
+                              {windowStats.map((item) => (
+                                <span
+                                  key={item.id}
+                                  className={styles.windowUsageRow}
+                                  title={`${item.label} - ${item.resetLabel}`}
+                                >
+                                  <span className={styles.windowUsageLabel}>{item.label}</span>
+                                  <span className={styles.windowUsageValue}>
+                                    {item.requests !== null ? item.requests.toLocaleString() : '--'}
+                                    {t('monitoring_center.window_usage_requests_suffix', { defaultValue: ' 请求' })}
+                                  </span>
+                                  <span className={styles.windowUsageValue}>
+                                    {item.tokens !== null ? formatCompactNumber(item.tokens) : '--'}
+                                    {t('monitoring_center.window_usage_tokens_suffix', { defaultValue: ' Token' })}
+                                  </span>
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            '--'
+                          )}
+                        </td>
                         <td>
                           <span className={styles.requestCountCell}>
                             <span>{row.requests.toLocaleString()}</span>
@@ -632,18 +665,6 @@ export function MonitorCredentialStatsCard({
                           </span>
                         </td>
                         <td>{row.cost > 0 ? formatUsd(row.cost) : '--'}</td>
-                        <td className={styles.windowCostCell}>
-                          {quotaCosts?.fiveHourCost !== null && quotaCosts?.fiveHourCost !== undefined
-                            ? formatUsd(quotaCosts.fiveHourCost)
-                            : quotaState?.status === 'success' && !hasFiveHourWindow
-                              ? t('monitoring_center.not_applicable')
-                              : '--'}
-                        </td>
-                        <td className={styles.windowCostCell}>
-                          {quotaCosts?.weeklyCost !== null && quotaCosts?.weeklyCost !== undefined
-                            ? formatUsd(quotaCosts.weeklyCost)
-                            : '--'}
-                        </td>
                       </tr>
                     );
                   })}
