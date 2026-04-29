@@ -1086,6 +1086,7 @@
     "others_label": "其它",
     "credential_cost_5h": "5小时花费",
     "credential_cost_7d": "7天花费",
+    "not_applicable": "不适用",
     "credential_filter_type": "凭证类型",
     "credential_search_label": "凭证名称",
     "credential_search_placeholder": "搜索凭证名称",

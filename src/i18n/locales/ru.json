@@ -1083,6 +1083,7 @@
     "others_label": "Прочие",
     "credential_cost_5h": "Стоимость за 5 ч",
     "credential_cost_7d": "Стоимость за 7 д",
+    "not_applicable": "Н/Д",
     "credential_filter_type": "Тип ключа",
     "credential_search_label": "Имя ключа",
     "credential_search_placeholder": "Поиск по имени ключа",

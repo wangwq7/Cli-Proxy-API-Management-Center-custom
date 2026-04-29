@@ -1082,6 +1082,7 @@
     "others_label": "其它",
     "credential_cost_5h": "5 小時花費",
     "credential_cost_7d": "7 天花費",
+    "not_applicable": "不適用",
     "credential_filter_type": "憑證類型",
     "credential_search_label": "憑證名稱",
     "credential_search_placeholder": "搜尋憑證名稱",

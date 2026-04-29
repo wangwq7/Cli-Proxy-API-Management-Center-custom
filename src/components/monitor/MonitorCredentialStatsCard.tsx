@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -59,6 +59,18 @@ interface CredentialRow {
 type CredentialHealth = 'normal' | 'exhausted' | 'disabled';
 
 const isCodexAuthFile = (file: AuthFileMeta | undefined) => Boolean(file && isCodexFile(file));
+
+const getCodexPlanLabel = (planType: string | null | undefined, t: ReturnType<typeof useTranslation>['t']) => {
+  const normalized = typeof planType === 'string' ? planType.trim().toLowerCase() : '';
+  if (normalized === 'pro') return t('codex_quota.plan_pro');
+  if (normalized === 'pro_lite' || normalized === 'prolite' || normalized === 'pro-lite') {
+    return t('codex_quota.plan_prolite');
+  }
+  if (normalized === 'plus') return t('codex_quota.plan_plus');
+  if (normalized === 'team') return t('codex_quota.plan_team');
+  if (normalized === 'free') return t('codex_quota.plan_free');
+  return planType || '--';
+};
 
 const normalizeCredentialType = (file?: AuthFileMeta) => {
   const rawType =
@@ -531,13 +543,15 @@ export function MonitorCredentialStatsCard({
                       .map((window) => ({
                         id: window.id,
                         label: window.labelKey ? t(window.labelKey, window.labelParams ?? {}) : window.label,
-                        remainingPercent:
+                        remainingValue:
                           typeof window.usedPercent === 'number'
-                            ? `${Math.max(0, Math.min(100, Math.round(100 - window.usedPercent)))}%`
-                            : '--'
+                            ? Math.max(0, Math.min(100, Math.round(100 - window.usedPercent)))
+                            : null,
+                        resetLabel: window.resetLabel
                       }));
                     const quotaCosts = windowCosts.get(row.key);
                     const isRefreshing = resolvedQuotaKey ? refreshingKeys[resolvedQuotaKey] === true : false;
+                    const hasFiveHourWindow = (quotaState?.windows ?? []).some((window) => window.id === 'five-hour');
                     return (
                       <tr key={row.key}>
                         <td className={styles.modelCell}>
@@ -549,20 +563,41 @@ export function MonitorCredentialStatsCard({
                         <td className={styles.credentialActionCell}>
                           {resolvedQuotaKey ? (
                             <div className={styles.credentialQuotaInline}>
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                className={styles.credentialRefreshButton}
-                                loading={isRefreshing}
-                                onClick={() => void handleRefreshQuota(row)}
-                              >
-                                {t('codex_quota.refresh_button')}
-                              </Button>
+                              <div className={styles.quotaPlanRow}>
+                                <span className={styles.quotaPlanText}>
+                                  {getCodexPlanLabel(quotaState?.planType, t)}
+                                </span>
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  className={styles.credentialRefreshButton}
+                                  loading={isRefreshing}
+                                  onClick={() => void handleRefreshQuota(row)}
+                                >
+                                  {t('common.refresh')}
+                                </Button>
+                              </div>
                               {quotaWindows.length > 0 ? (
                                 <div className={styles.quotaSummary}>
                                   {quotaWindows.map((window) => (
-                                    <span key={window.id} className={styles.quotaChip}>
-                                      {window.label}:{window.remainingPercent}
+                                    <span
+                                      key={window.id}
+                                      className={styles.quotaCircleItem}
+                                      title={`${window.label} - ${window.resetLabel}`}
+                                    >
+                                      <span
+                                        className={styles.quotaCircle}
+                                        style={
+                                          {
+                                            '--quota-remaining': `${window.remainingValue ?? 0}%`
+                                          } as CSSProperties
+                                        }
+                                      >
+                                        <span className={styles.quotaCircleValue}>
+                                          {window.remainingValue !== null ? `${window.remainingValue}%` : '--'}
+                                        </span>
+                                      </span>
+                                      <span className={styles.quotaCircleLabel}>{window.label}</span>
                                     </span>
                                   ))}
                                 </div>
@@ -600,7 +635,9 @@ export function MonitorCredentialStatsCard({
                         <td className={styles.windowCostCell}>
                           {quotaCosts?.fiveHourCost !== null && quotaCosts?.fiveHourCost !== undefined
                             ? formatUsd(quotaCosts.fiveHourCost)
-                            : '--'}
+                            : quotaState?.status === 'success' && !hasFiveHourWindow
+                              ? t('monitoring_center.not_applicable')
+                              : '--'}
                         </td>
                         <td className={styles.windowCostCell}>
                           {quotaCosts?.weeklyCost !== null && quotaCosts?.weeklyCost !== undefined
