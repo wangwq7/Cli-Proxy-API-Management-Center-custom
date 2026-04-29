@@ -437,12 +437,48 @@ const fetchCodexQuota = async (
     'Chatgpt-Account-Id': accountId,
   };
 
-  const result = await apiCallApi.request({
-    authIndex,
-    method: 'GET',
-    url: CODEX_USAGE_URL,
-    header: requestHeader,
-  });
+  const fetchUsage = () =>
+    apiCallApi.request({
+      authIndex,
+      method: 'GET',
+      url: CODEX_USAGE_URL,
+      header: requestHeader,
+    });
+  const waitBeforeRetry = (attempt: number) =>
+    new Promise((resolve) => window.setTimeout(resolve, 800 * (attempt + 1)));
+  const isRetryableFetchError = (err: unknown) => {
+    const status =
+      typeof err === 'object' && err !== null && 'status' in err
+        ? Number((err as { status?: unknown }).status)
+        : null;
+    const message = err instanceof Error ? err.message : String(err ?? '');
+    return (
+      (status !== null && [502, 503, 504].includes(status)) ||
+      /status code 50[234]/i.test(message)
+    );
+  };
+
+  let result: Awaited<ReturnType<typeof fetchUsage>> | null = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      result = await fetchUsage();
+    } catch (err) {
+      if (attempt < 2 && isRetryableFetchError(err)) {
+        await waitBeforeRetry(attempt);
+        continue;
+      }
+      throw err;
+    }
+    if (attempt < 2 && [502, 503, 504].includes(result.statusCode)) {
+      await waitBeforeRetry(attempt);
+      continue;
+    }
+    break;
+  }
+
+  if (!result) {
+    throw new Error(t('common.unknown_error'));
+  }
 
   if (result.statusCode < 200 || result.statusCode >= 300) {
     throw createStatusError(getApiCallErrorMessage(result), result.statusCode);

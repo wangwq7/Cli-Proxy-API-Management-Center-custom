@@ -488,9 +488,18 @@ export function MonitorCredentialStatsCard({
           <div className={styles.detailsScroll}>
             <div className={styles.tableWrapper}>
               <table className={styles.table}>
+                <colgroup>
+                  <col className={styles.credentialNameCol} />
+                  <col className={styles.credentialActionCol} />
+                  <col className={styles.windowUsageCol} />
+                  <col className={styles.metricCol} />
+                  <col className={styles.metricCol} />
+                  <col className={styles.metricCol} />
+                  <col className={styles.metricCol} />
+                </colgroup>
                 <thead>
                   <tr>
-                    <th className={styles.sortableHeader} aria-sort={ariaSort('displayName')}>
+                    <th className={`${styles.sortableHeader} ${styles.credentialNameColumn}`} aria-sort={ariaSort('displayName')}>
                       <button
                         type="button"
                         className={styles.sortHeaderButton}

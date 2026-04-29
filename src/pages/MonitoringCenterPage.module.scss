@@ -541,8 +541,10 @@
 
 .table {
   width: 100%;
+  min-width: 1280px;
   border-collapse: collapse;
   font-size: 12px;
+  table-layout: fixed;
 
   th,
   td {
@@ -573,9 +575,32 @@
 
 .modelCell {
   font-weight: 500;
-  max-width: 190px;
-  min-width: 150px;
-  word-break: break-all;
+  overflow: hidden;
+
+  > div {
+    min-width: 0;
+  }
+
+  span:first-child {
+    display: inline-block;
+    max-width: calc(100% - 58px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: middle;
+    white-space: nowrap;
+  }
+}
+
+.credentialNameCol {
+  width: 300px;
+}
+
+.credentialNameColumn {
+  width: 300px;
+}
+
+.credentialActionCol {
+  width: 250px;
 }
 
 .credentialActionHeader {
@@ -612,6 +637,14 @@
   width: 150px;
   min-width: 150px;
   max-width: 150px;
+}
+
+.metricCol {
+  width: 130px;
+}
+
+.windowUsageCol {
+  width: 230px;
 }
 
 .windowUsageColumn {
