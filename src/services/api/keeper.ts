@@ -40,6 +40,34 @@ export interface KeeperJob {
   stats: Record<string, number>;
 }
 
+export interface KeeperRunPolicy {
+  invalid_token?: string;
+  expired_no_refresh?: string;
+  quota_no_refresh?: string;
+  quota_reached?: string;
+  recovered_disabled?: string;
+  near_expiry?: string;
+}
+
+export interface KeeperRunOverrides {
+  quota_threshold?: number;
+  expiry_threshold_days?: number;
+  worker_threads?: number;
+  enable_refresh?: boolean;
+}
+
+export interface KeeperRunOptions {
+  policy?: KeeperRunPolicy;
+  overrides?: KeeperRunOverrides;
+}
+
+export interface KeeperTokenUpdate {
+  seq: number;
+  run_id: number;
+  name: string;
+  token: KeeperToken;
+}
+
 export interface KeeperMonitorStatus {
   enabled: boolean;
   db_path: string;
@@ -196,8 +224,14 @@ class KeeperApiClient {
     return this.get<{ tokens: KeeperToken[]; updated_at?: number | null }>('/deleted-tokens');
   }
 
-  run(dryRun: boolean) {
-    return this.post<{ ok: boolean }>('/run', { dry_run: dryRun });
+  getTokenUpdates(since = 0) {
+    return this.get<{ run_id: number; seq: number; updates: KeeperTokenUpdate[] }>('/token-updates', {
+      params: { since }
+    });
+  }
+
+  run(dryRun: boolean, options: KeeperRunOptions = {}) {
+    return this.post<{ ok: boolean }>('/run', { dry_run: dryRun, ...options });
   }
 
   stop() {
