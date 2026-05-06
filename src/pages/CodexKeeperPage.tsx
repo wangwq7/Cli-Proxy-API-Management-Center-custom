@@ -68,7 +68,7 @@ const defaultPolicy: Required<KeeperRunPolicy> = {
   invalid_token: 'mark_dead',
   expired_no_refresh: 'disable',
   quota_no_refresh: 'disable',
-  quota_reached: 'disable',
+  quota_reached: 'skip',
   recovered_disabled: 'enable',
   near_expiry: 'refresh',
 };
@@ -217,7 +217,7 @@ const tokenHealth = (token: KeeperToken): HealthMeta => {
 const tokenStatus = (token: KeeperToken): StatusMeta => {
   if (isDeadToken(token)) return { text: '过期/死号', tone: 'danger' };
   if (token.disabled) return { text: '已禁用', tone: 'warn' };
-  if (isNoQuota(token)) return { text: '无额度', tone: 'info' };
+  if (isNoQuota(token)) return { text: '无额度', tone: 'warn' };
   if (usageUsedPercent(token) === null) return { text: '状态未知', tone: 'muted' };
   if (isNoRefresh(token)) return { text: '无 Refresh', tone: 'muted' };
   return { text: '正常', tone: 'good' };
@@ -361,6 +361,17 @@ const toneClassName = (tone: StatusMeta['tone']) => {
 
 const deltaText = (value: number) => (value > 0 ? `+${value}` : String(value));
 
+const deltaToneClassName = (key: SummaryKey, value: number) => {
+  if (value === 0 || key === 'total') return '';
+  if (key === 'enabled' || key === 'alive' || key === 'good') {
+    return value > 0 ? styles.deltaGood : styles.deltaBad;
+  }
+  if (key === 'expired' || key === 'noquota' || key === 'unknown' || key === 'noRefresh') {
+    return value < 0 ? styles.deltaGood : styles.deltaBad;
+  }
+  return '';
+};
+
 export function CodexKeeperPage() {
   const { t } = useTranslation();
   const [passwordInput, setPasswordInput] = useState(() => keeperApi.getPassword());
@@ -383,6 +394,7 @@ export function CodexKeeperPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [policyOpen, setPolicyOpen] = useState(false);
+  const [logExpanded, setLogExpanded] = useState(false);
   const [policy, setPolicy] = useState<Required<KeeperRunPolicy>>(defaultPolicy);
   const [overrides, setOverrides] = useState<Required<KeeperRunOverrides>>(defaultOverrides);
   const [runMapActive, setRunMapActive] = useState(false);
@@ -448,8 +460,8 @@ export function CodexKeeperPage() {
     setOverrides({
       quota_threshold: Number(nextSettings.quota_threshold ?? defaultOverrides.quota_threshold),
       expiry_threshold_days: Number(nextSettings.expiry_threshold_days ?? defaultOverrides.expiry_threshold_days),
-      worker_threads: Number(nextSettings.worker_threads ?? defaultOverrides.worker_threads),
-      enable_refresh: Boolean(nextSettings.enable_refresh ?? defaultOverrides.enable_refresh),
+      worker_threads: defaultOverrides.worker_threads,
+      enable_refresh: defaultOverrides.enable_refresh,
     });
   }, []);
 
@@ -915,9 +927,9 @@ export function CodexKeeperPage() {
               <small>{tokenSummary.noquota} 无额度 · {tokenSummary.unknown} 未知</small>
             </div>
             <div className={styles.statCard}>
-              <span>监控事件</span>
-              <b>{monitorStatus?.stored_events ?? 0}</b>
-              <small>{monitorStatus?.enabled ? `每 ${monitorStatus.poll_seconds}s 同步` : 'sidecar 监控未启用'}</small>
+              <span>需关注</span>
+              <b>{tokenSummary.expired + tokenSummary.noquota + tokenSummary.unknown}</b>
+              <small>{tokenSummary.expired} 死号 · {tokenSummary.noquota} 空额度 · {tokenSummary.unknown} 未知</small>
             </div>
           </div>
 
@@ -925,7 +937,7 @@ export function CodexKeeperPage() {
             <section className={`${styles.card} ${styles.mapCard}`}>
               <div className={styles.sectionHead}>
                 <div>
-                  <h2>小方块状态图</h2>
+                  <h2>凭证健康矩阵</h2>
                   <p>
                     {runMapActive
                       ? `${mapSummary.total} 个 token · 本轮已返回 ${runTokenStates.size} 个 · 未返回 ${Math.max(0, mapSummary.total - runTokenStates.size)} 个`
@@ -972,48 +984,50 @@ export function CodexKeeperPage() {
                 })}
               </div>
 
-              <div className={styles.batchBar}>
-                <div>
-                  <b>{selectedCount}</b>
-                  <span>个 token 已选择</span>
+              {selectedCount > 0 && (
+                <div className={styles.batchBar}>
+                  <div>
+                    <b>{selectedCount}</b>
+                    <span>个 token 已选择</span>
+                  </div>
+                  <div className={styles.batchActions}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={actionDisabled}
+                      loading={busyAction === '刷新额度'}
+                      onClick={() =>
+                        void runSelectedAction('刷新额度', (names) => keeperApi.refreshTokenUsage(names), 'updated')
+                      }
+                    >
+                      刷新额度
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={actionDisabled}
+                      loading={busyAction === 'Refresh'}
+                      onClick={() => void runSelectedAction('Refresh', (names) => keeperApi.refreshTokens(names), 'updated')}
+                    >
+                      Refresh
+                    </Button>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      disabled={actionDisabled}
+                      loading={busyAction === '删除'}
+                      onClick={() =>
+                        void runSelectedAction('删除', (names) => keeperApi.deleteTokens(names), 'deleted', '确认删除已选择的 {count} 个 token 吗？')
+                      }
+                    >
+                      删除
+                    </Button>
+                    <Button variant="secondary" size="sm" disabled={Boolean(busyAction)} onClick={() => setSelectedTokens(new Set())}>
+                      取消选择
+                    </Button>
+                  </div>
                 </div>
-                <div className={styles.batchActions}>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={actionDisabled}
-                    loading={busyAction === '刷新额度'}
-                    onClick={() =>
-                      void runSelectedAction('刷新额度', (names) => keeperApi.refreshTokenUsage(names), 'updated')
-                    }
-                  >
-                    批量刷新额度
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={actionDisabled}
-                    loading={busyAction === 'Refresh'}
-                    onClick={() => void runSelectedAction('Refresh', (names) => keeperApi.refreshTokens(names), 'updated')}
-                  >
-                    批量 Refresh
-                  </Button>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    disabled={actionDisabled}
-                    loading={busyAction === '删除'}
-                    onClick={() =>
-                      void runSelectedAction('删除', (names) => keeperApi.deleteTokens(names), 'deleted', '确认删除已选择的 {count} 个 token 吗？')
-                    }
-                  >
-                    删除
-                  </Button>
-                  <Button variant="ghost" size="sm" disabled={!selectedCount || Boolean(busyAction)} onClick={() => setSelectedTokens(new Set())}>
-                    清空选择
-                  </Button>
-                </div>
-              </div>
+              )}
 
               <div className={styles.deltaRow}>
                 {lastTokenDelta ? (
@@ -1022,12 +1036,12 @@ export function CodexKeeperPage() {
                     {([
                       ['总数', 'total'],
                       ['启用', 'enabled'],
-                      ['禁用', 'disabled'],
                       ['过期/死号', 'expired'],
                       ['无额度', 'noquota'],
                       ['未知', 'unknown'],
+                      ['无 Refresh', 'noRefresh'],
                     ] as Array<[string, SummaryKey]>).map(([label, key]) => (
-                      <span key={key} className={lastTokenDelta.diff[key] > 0 ? styles.deltaUp : lastTokenDelta.diff[key] < 0 ? styles.deltaDown : ''}>
+                      <span key={key} className={deltaToneClassName(key, lastTokenDelta.diff[key])}>
                         {label}<b>{deltaText(lastTokenDelta.diff[key])}</b>
                       </span>
                     ))}
@@ -1042,7 +1056,7 @@ export function CodexKeeperPage() {
               <div className={styles.sectionHead}>
                 <div>
                   <h2>巡检</h2>
-                  <p>Dry Run 只演练；真实巡检按策略禁用、启用、刷新或删除。</p>
+                  <p>按当前策略检查 token，并在需要时禁用、启用、刷新或删除。</p>
                 </div>
                 <span className={`${styles.statusPulse} ${running ? styles.statusRunning : job.error ? styles.statusError : styles.statusOk}`}>
                   {running ? '↻' : job.error ? '!' : '✓'}
@@ -1058,16 +1072,13 @@ export function CodexKeeperPage() {
               </div>
 
               <div className={styles.runActions}>
-                <Button onClick={() => void startRun(true)} disabled={running || Boolean(busyAction)}>
-                  安全演练 Dry Run
+                <Button size="sm" onClick={() => void startRun(false)} disabled={running || Boolean(busyAction)}>
+                  开始巡检
                 </Button>
-                <Button variant="danger" onClick={() => void startRun(false)} disabled={running || Boolean(busyAction)}>
-                  执行真实巡检
-                </Button>
-                <Button variant="secondary" onClick={() => setPolicyOpen(true)}>
+                <Button variant="secondary" size="sm" onClick={() => setPolicyOpen(true)}>
                   巡检参数
                 </Button>
-                <Button variant="secondary" onClick={() => void stopRun()} disabled={!running} loading={busyAction === 'stop'}>
+                <Button variant="secondary" size="sm" onClick={() => void stopRun()} disabled={!running} loading={busyAction === 'stop'}>
                   终止本轮
                 </Button>
               </div>
@@ -1084,44 +1095,32 @@ export function CodexKeeperPage() {
               <div className={styles.sectionHeadCompact}>
                 <div>
                   <h3>运行日志</h3>
-                  <p>显示最近 {LOG_TAIL_LINES} 行</p>
+                  <p>{logExpanded ? `显示最近 ${LOG_TAIL_LINES} 行` : '默认收起，展开后查看实时输出'}</p>
                 </div>
-                <span className={styles.stamp}>{totalLogLines > logLines.length ? `${totalLogLines} 行 · 显示 ${logLines.length}` : `${logLines.length} 行`}</span>
-              </div>
-              <div className={styles.logBox} ref={logBodyRef}>
-                {logLines.length ? (
-                  logLines.map((line, index) => (
-                    <div key={`${index}-${line}`} className={`${styles.logLine} ${logClassName(line)}`}>
-                      {line || ' '}
-                    </div>
-                  ))
-                ) : (
-                  <div className={`${styles.logLine} ${styles.logInfo}`}>等待巡检输出...</div>
-                )}
-              </div>
-            </section>
-
-            <section className={`${styles.card} ${styles.monitorCard}`}>
-              <div className={styles.sectionHead}>
-                <div>
-                  <h2>Sidecar 监控状态</h2>
-                  <p>CPA usage queue / snapshot 由 sidecar 持久化到 NAS SQLite。</p>
+                <div className={styles.logActions}>
+                  <span className={styles.stamp}>{totalLogLines > logLines.length ? `${totalLogLines} 行 · 显示 ${logLines.length}` : `${logLines.length} 行`}</span>
+                  <Button variant="secondary" size="sm" onClick={() => setLogExpanded((value) => !value)}>
+                    {logExpanded ? '收起日志' : '展开日志'}
+                  </Button>
                 </div>
-                <Button variant="secondary" size="sm" onClick={() => void pollMonitorOnce()} loading={busyAction === 'monitor'}>
-                  立即同步
-                </Button>
               </div>
-              <div className={styles.monitorGrid}>
-                <div><span>状态</span><b>{monitorStatus?.enabled ? '已启用' : '未启用'}</b></div>
-                <div><span>事件数</span><b>{monitorStatus?.stored_events ?? 0}</b></div>
-                <div><span>轮询</span><b>{monitorStatus ? `${monitorStatus.poll_seconds}s` : '-'}</b></div>
-                <div><span>批量</span><b>{monitorStatus?.batch_size ?? '-'}</b></div>
-              </div>
-              <div className={styles.monitorMeta}>
-                <span>DB: {monitorStatus?.db_path || settings?.monitor_db || '-'}</span>
-                <span>最近同步: {monitorStatus?.last_poll?.at ? formatDateTime(monitorStatus.last_poll.at) : '-'}</span>
-                {monitorStatus?.last_poll?.error && <span className={styles.metaError}>错误: {monitorStatus.last_poll.error}</span>}
-              </div>
+              {logExpanded ? (
+                <div className={styles.logBox} ref={logBodyRef}>
+                  {logLines.length ? (
+                    logLines.map((line, index) => (
+                      <div key={`${index}-${line}`} className={`${styles.logLine} ${logClassName(line)}`}>
+                        {line || ' '}
+                      </div>
+                    ))
+                  ) : (
+                    <div className={`${styles.logLine} ${styles.logInfo}`}>等待巡检输出...</div>
+                  )}
+                </div>
+              ) : (
+                <div className={styles.logCollapsed}>
+                  运行日志已收起。当前状态：{running ? '巡检进行中' : '空闲'}；最近日志 {logLines.length} 行。
+                </div>
+              )}
             </section>
 
             <section className={`${styles.card} ${styles.tableCard}`}>
@@ -1327,6 +1326,33 @@ export function CodexKeeperPage() {
                 </div>
               </div>
             </section>
+
+            <section className={`${styles.card} ${styles.monitorCard}`}>
+              <div className={styles.sectionHead}>
+                <div>
+                  <h2>监控数据持久化状态</h2>
+                  <p>
+                    这里显示 CodexKeeper 后台 sidecar 是否正在把 CPA 的请求统计写入 NAS 上的 SQLite。
+                    它不处理 token 巡检，只负责让监控中心的历史用量不因 CPA 重启或升级丢失。
+                  </p>
+                </div>
+                <Button variant="secondary" size="sm" onClick={() => void pollMonitorOnce()} loading={busyAction === 'monitor'}>
+                  立即同步
+                </Button>
+              </div>
+              <div className={styles.monitorGrid}>
+                <div><span>持久化状态</span><b>{monitorStatus?.enabled ? '已启用' : '未启用'}</b></div>
+                <div><span>已保存事件</span><b>{monitorStatus?.stored_events ?? 0}</b></div>
+                <div><span>自动同步间隔</span><b>{monitorStatus ? `${monitorStatus.poll_seconds}s` : '-'}</b></div>
+                <div><span>每批读取上限</span><b>{monitorStatus?.batch_size ?? '-'}</b></div>
+              </div>
+              <div className={styles.monitorMeta}>
+                <span>SQLite 文件：{monitorStatus?.db_path || settings?.monitor_db || '-'}</span>
+                <span>最近同步：{monitorStatus?.last_poll?.at ? formatDateTime(monitorStatus.last_poll.at) : '-'}</span>
+                <span>数据来源：优先消费 CPA usage queue，兼容旧 snapshot 导入。</span>
+                {monitorStatus?.last_poll?.error && <span className={styles.metaError}>错误：{monitorStatus.last_poll.error}</span>}
+              </div>
+            </section>
           </div>
         </>
       )}
@@ -1338,13 +1364,13 @@ export function CodexKeeperPage() {
         onClose={() => setPolicyOpen(false)}
         footer={
           <>
-            <Button variant="secondary" onClick={() => {
+            <Button variant="secondary" size="sm" onClick={() => {
               setPolicy(defaultPolicy);
               setOverrides(defaultOverrides);
             }}>
               恢复默认
             </Button>
-            <Button onClick={() => setPolicyOpen(false)}>保存</Button>
+            <Button size="sm" onClick={() => setPolicyOpen(false)}>保存</Button>
           </>
         }
       >

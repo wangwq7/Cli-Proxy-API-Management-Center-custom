@@ -42,6 +42,17 @@
   flex-wrap: wrap;
 }
 
+.headerActions :global(.btn),
+.batchActions :global(.btn),
+.runActions :global(.btn),
+.rowActions :global(.btn),
+.pager :global(.btn),
+.logActions :global(.btn) {
+  min-height: 32px;
+  padding-inline: 10px;
+  font-size: 12px;
+}
+
 .loginCard,
 .card,
 .statCard {
@@ -143,11 +154,11 @@
 }
 
 .runCard {
-  grid-column: span 7;
+  grid-column: span 12;
 }
 
 .monitorCard {
-  grid-column: span 5;
+  grid-column: span 12;
 
   @include tablet {
     grid-column: span 12;
@@ -172,7 +183,7 @@
   h3 {
     margin: 0;
     color: var(--text-primary);
-    font-size: 18px;
+    font-size: 17px;
     font-weight: 700;
   }
 
@@ -242,12 +253,13 @@
   height: 14px;
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 4px;
+  background: var(--keeper-cell-color);
   cursor: pointer;
   transition: transform $transition-fast, box-shadow $transition-fast, outline-color $transition-fast;
 
   &:hover {
     transform: translateY(-1px);
-    box-shadow: 0 0 0 3px rgba(139, 134, 128, 0.18);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--keeper-cell-color) 28%, transparent);
   }
 }
 
@@ -257,37 +269,42 @@
 }
 
 .tokenCellChanged {
-  animation: pulseCell 1.25s ease-in-out infinite;
+  animation: pulseCell 1.35s ease-in-out infinite;
 }
 
 @keyframes pulseCell {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.35);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--keeper-cell-color) 60%, transparent);
   }
   50% {
-    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0);
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--keeper-cell-color) 0%, transparent);
   }
 }
 
 .healthGood {
-  background: #22c55e;
+  --keeper-cell-color: #22c55e;
+  background: var(--keeper-cell-color);
 }
 
 .healthWarn {
-  background: #f59e0b;
+  --keeper-cell-color: #0ea5e9;
+  background: var(--keeper-cell-color);
 }
 
 .healthNoquota {
-  background: #0ea5e9;
+  --keeper-cell-color: #f59e0b;
+  background: var(--keeper-cell-color);
 }
 
 .healthExpired {
-  background: #ef4444;
+  --keeper-cell-color: #ef4444;
+  background: var(--keeper-cell-color);
 }
 
 .healthUnknown {
-  background: #9ca3af;
+  --keeper-cell-color: #9ca3af;
+  background: var(--keeper-cell-color);
 }
 
 .batchBar {
@@ -343,13 +360,13 @@
   }
 }
 
-.deltaUp {
+.deltaGood {
   color: #166534 !important;
   background: rgba(34, 197, 94, 0.1) !important;
   border-color: rgba(34, 197, 94, 0.25) !important;
 }
 
-.deltaDown {
+.deltaBad {
   color: #991b1b !important;
   background: rgba(239, 68, 68, 0.1) !important;
   border-color: rgba(239, 68, 68, 0.25) !important;
@@ -455,8 +472,28 @@
   }
 }
 
+.runCard .miniGrid {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+
+  @include tablet {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  @include mobile {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .monitorGrid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+
+  @include tablet {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  @include mobile {
+    grid-template-columns: 1fr;
+  }
 }
 
 .monitorMeta {
@@ -472,14 +509,31 @@
   color: #ef4444;
 }
 
+.logActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.logCollapsed {
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-md;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
 .logBox {
   height: 300px;
   overflow: auto;
   padding: 12px;
   border: 1px solid var(--border-color);
   border-radius: $radius-md;
-  background: #0f172a;
-  color: #cbd5e1;
+  background: var(--bg-primary);
+  color: var(--text-primary);
   font-family: $font-mono;
   font-size: 12px;
   line-height: 1.55;
@@ -492,31 +546,31 @@
 }
 
 .logInfo {
-  color: #cbd5e1;
+  color: var(--text-secondary);
 }
 
 .logOk,
 .logEnable {
-  color: #86efac;
+  color: #15803d;
 }
 
 .logWarn,
 .logDry {
-  color: #fde68a;
+  color: #b45309;
 }
 
 .logError,
 .logDelete,
 .logDisable {
-  color: #fca5a5;
+  color: #b91c1c;
 }
 
 .logSkip {
-  color: #94a3b8;
+  color: var(--text-tertiary);
 }
 
 .logRefresh {
-  color: #93c5fd;
+  color: #2563eb;
 }
 
 .tableTools {
