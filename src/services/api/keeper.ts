@@ -20,8 +20,14 @@ export interface KeeperToken {
   availability_status?: string;
   availability_reason?: string;
   usage?: {
+    plan_type?: string;
     primary_used_percent?: number;
+    primary_window_seconds?: number | null;
+    primary_reset_at?: number | null;
     secondary_used_percent?: number;
+    secondary_window_seconds?: number | null;
+    secondary_reset_at?: number | null;
+    checked_at?: number;
     [key: string]: unknown;
   };
   [key: string]: unknown;

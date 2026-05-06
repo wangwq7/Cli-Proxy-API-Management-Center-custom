@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -6,6 +6,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { CODEX_CONFIG } from '@/components/quota';
+import { keeperApi, type KeeperToken } from '@/services/api/keeper';
 import { useQuotaStore } from '@/stores';
 import type { CodexQuotaState } from '@/types';
 import type { AuthFileItem as AuthFileMeta } from '@/types/authFile';
@@ -23,6 +24,9 @@ import {
 import styles from '@/pages/MonitoringCenterPage.module.scss';
 
 const ALL_FILTER = '__all__';
+const KEEPER_QUOTA_CACHE_POLL_MS = 60_000;
+const FIVE_HOUR_SECONDS = 5 * 60 * 60;
+const WEEK_SECONDS = 7 * 24 * 60 * 60;
 
 type SortKey =
   | 'displayName'
@@ -34,6 +38,7 @@ type SortDir = 'asc' | 'desc';
 
 interface MonitorCredentialStatsCardProps {
   usage: UsagePayload | null;
+  windowUsageSource?: UsagePayload | null;
   loading: boolean;
   modelPrices: Record<string, ModelPrice>;
   authFiles: AuthFileMeta[];
@@ -63,6 +68,11 @@ interface WindowUsageStats {
 }
 
 type CredentialHealth = 'normal' | 'exhausted' | 'disabled';
+type CachedWindowMeta = {
+  id: string;
+  labelKey: string;
+  windowKind: NonNullable<CodexQuotaState['windows'][number]['windowKind']>;
+};
 
 const isCodexAuthFile = (file: AuthFileMeta | undefined) => Boolean(file && isCodexFile(file));
 
@@ -86,6 +96,85 @@ const normalizeCredentialType = (file?: AuthFileMeta) => {
         ? file.provider
         : '';
   return rawType.trim().toLowerCase() || 'unknown';
+};
+
+const normalizePercent = (value: unknown): number | null => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(100, parsed)) : null;
+};
+
+const normalizePositiveNumber = (value: unknown): number | null => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+
+const formatCachedResetLabel = (resetAtUnix: number | null) => {
+  if (!resetAtUnix) return '-';
+  const date = new Date(resetAtUnix * 1000);
+  return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString();
+};
+
+const getCachedWindowMeta = (
+  slot: 'primary' | 'secondary',
+  windowSeconds: number | null
+): CachedWindowMeta => {
+  if (windowSeconds === FIVE_HOUR_SECONDS) {
+    return { id: 'five-hour', labelKey: 'codex_quota.primary_window', windowKind: 'five-hour' };
+  }
+  if (windowSeconds === WEEK_SECONDS) {
+    return { id: 'weekly', labelKey: 'codex_quota.secondary_window', windowKind: 'weekly' };
+  }
+  return slot === 'secondary'
+    ? { id: 'weekly', labelKey: 'codex_quota.secondary_window', windowKind: 'weekly' }
+    : { id: 'five-hour', labelKey: 'codex_quota.primary_window', windowKind: 'five-hour' };
+};
+
+const buildCachedCodexQuotaState = (
+  token: KeeperToken,
+  t: ReturnType<typeof useTranslation>['t']
+): CodexQuotaState | null => {
+  const usage = token.usage || {};
+  const planType = typeof usage.plan_type === 'string' ? usage.plan_type : undefined;
+  const windows: CodexQuotaState['windows'] = [];
+  const seen = new Set<string>();
+
+  ([
+    {
+      slot: 'primary' as const,
+      used: usage.primary_used_percent,
+      windowSeconds: usage.primary_window_seconds,
+      resetAt: usage.primary_reset_at,
+    },
+    {
+      slot: 'secondary' as const,
+      used: usage.secondary_used_percent,
+      windowSeconds: usage.secondary_window_seconds,
+      resetAt: usage.secondary_reset_at,
+    },
+  ]).forEach((item) => {
+    const usedPercent = normalizePercent(item.used);
+    if (usedPercent === null) return;
+    const windowSeconds = normalizePositiveNumber(item.windowSeconds);
+    const meta = getCachedWindowMeta(item.slot, windowSeconds);
+    if (seen.has(meta.id)) return;
+    seen.add(meta.id);
+    const resetAtUnix = normalizePositiveNumber(item.resetAt);
+    windows.push({
+      ...meta,
+      label: t(meta.labelKey),
+      usedPercent,
+      resetLabel: formatCachedResetLabel(resetAtUnix),
+      resetAtUnix,
+      windowSeconds,
+    });
+  });
+
+  if (windows.length === 0) return null;
+  return {
+    status: 'success',
+    windows,
+    planType: planType || undefined,
+  };
 };
 
 const toWindowRange = (endMs: number | null, windowMs: number | null) => {
@@ -112,6 +201,7 @@ const getCredentialHealth = (file?: AuthFileMeta): CredentialHealth => {
 
 export function MonitorCredentialStatsCard({
   usage,
+  windowUsageSource,
   loading,
   modelPrices,
   authFiles
@@ -122,8 +212,24 @@ export function MonitorCredentialStatsCard({
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [typeFilter, setTypeFilter] = useState(ALL_FILTER);
   const [searchTerm, setSearchTerm] = useState('');
+  const [keeperTokens, setKeeperTokens] = useState<KeeperToken[]>([]);
   const codexQuota = useQuotaStore((state) => state.codexQuota);
   const setCodexQuota = useQuotaStore((state) => state.setCodexQuota);
+
+  const loadKeeperQuotaCache = useCallback(async () => {
+    try {
+      const data = await keeperApi.listTokens(false);
+      setKeeperTokens(Array.isArray(data.tokens) ? data.tokens : []);
+    } catch {
+      // Keeper cache is an optimization; failed auth/network must not block usage stats.
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadKeeperQuotaCache();
+    const timer = window.setInterval(() => void loadKeeperQuotaCache(), KEEPER_QUOTA_CACHE_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [loadKeeperQuotaCache]);
 
   const rows = useMemo((): CredentialRow[] => {
     if (!usage) return [];
@@ -317,39 +423,74 @@ export function MonitorCredentialStatsCard({
     [authFiles, resolveQuotaKey, setCodexQuota, t]
   );
 
+  const cachedQuotaByName = useMemo(() => {
+    const map = new Map<string, CodexQuotaState>();
+    keeperTokens.forEach((token) => {
+      const name = String(token.name || '').trim();
+      if (!name || token.deleted === true) return;
+      const quota = buildCachedCodexQuotaState(token, t);
+      if (quota) {
+        map.set(name, quota);
+      }
+    });
+    return map;
+  }, [keeperTokens, t]);
+
+  const quotaByName = useMemo(() => {
+    const merged = new Map(cachedQuotaByName);
+    Object.entries(codexQuota).forEach(([name, state]) => {
+      if (state) {
+        merged.set(name, state);
+      }
+    });
+    return merged;
+  }, [cachedQuotaByName, codexQuota]);
+
+  const getQuotaState = useCallback(
+    (quotaKey: string | null): CodexQuotaState | undefined =>
+      quotaKey ? quotaByName.get(quotaKey) : undefined,
+    [quotaByName]
+  );
+
   const rowEvents = useMemo(() => {
-    const details = collectUsageDetails(usage);
+    const details = collectUsageDetails(windowUsageSource ?? usage);
     const buckets = new Map<string, Array<{ timestampMs: number; tokens: number }>>();
+    const rowKeyByAuthIndex = new Map<string, string>();
+    const rowKeyBySource = new Map<string, string>();
 
     rows.forEach((row) => {
       buckets.set(row.key, []);
+      if (row.authIndex) {
+        rowKeyByAuthIndex.set(row.authIndex, row.key);
+      }
+      if (row.authFileName) {
+        rowKeyBySource.set(row.authFileName, row.key);
+      }
     });
 
     details.forEach((detail) => {
       const authIndex = normalizeAuthIndex(detail.auth_index);
       const sourceRaw = String(detail.source ?? '').trim();
       const sourceText = sourceRaw.startsWith('t:') ? sourceRaw.slice(2) : sourceRaw;
-      const row = rows.find((item) => {
-        if (item.authIndex && authIndex && item.authIndex === authIndex) return true;
-        if (item.authFileName && sourceRaw && item.authFileName === sourceRaw) return true;
-        if (item.authFileName && sourceText && item.authFileName === sourceText) return true;
-        return false;
-      });
-      if (!row) return;
+      const rowKey =
+        (authIndex ? rowKeyByAuthIndex.get(authIndex) : undefined) ??
+        (sourceRaw ? rowKeyBySource.get(sourceRaw) : undefined) ??
+        (sourceText ? rowKeyBySource.get(sourceText) : undefined);
+      if (!rowKey) return;
       const timestampMs = detail.__timestampMs ?? Date.parse(detail.timestamp);
       if (!Number.isFinite(timestampMs) || timestampMs <= 0) return;
-      buckets.get(row.key)?.push({ timestampMs, tokens: extractTotalTokens(detail) });
+      buckets.get(rowKey)?.push({ timestampMs, tokens: extractTotalTokens(detail) });
     });
 
     return buckets;
-  }, [rows, usage]);
+  }, [rows, usage, windowUsageSource]);
 
   const windowUsage = useMemo(() => {
     const result = new Map<string, WindowUsageStats[]>();
 
     rows.forEach((row) => {
       const quotaKey = resolveQuotaKey(row);
-      const quotaState = quotaKey ? (codexQuota[quotaKey] as CodexQuotaState | undefined) : undefined;
+      const quotaState = getQuotaState(quotaKey);
       const events = rowEvents.get(row.key) ?? [];
       const stats = (quotaState?.windows ?? [])
         .filter((window) => window.id === 'five-hour' || window.id === 'weekly')
@@ -391,7 +532,7 @@ export function MonitorCredentialStatsCard({
     });
 
     return result;
-  }, [codexQuota, resolveQuotaKey, rowEvents, rows, t]);
+  }, [getQuotaState, resolveQuotaKey, rowEvents, rows, t]);
 
   const handleSort = useCallback(
     (key: SortKey) => {
@@ -436,7 +577,7 @@ export function MonitorCredentialStatsCard({
     sortKey === key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none';
 
   return (
-    <Card title={t('usage_stats.credential_stats')} className={`${styles.detailsFixedCard} ${styles.fullWidthSection}`}>
+    <Card title={t('usage_stats.credential_stats')} className={`${styles.detailsFixedCard} ${styles.credentialStatsCard} ${styles.fullWidthSection}`}>
       <div className={styles.requestEventsToolbar}>
         <div className={styles.requestEventsFilterItem}>
           <span className={styles.requestEventsFilterLabel}>
@@ -553,9 +694,7 @@ export function MonitorCredentialStatsCard({
                 <tbody>
                   {sortedRows.map((row) => {
                     const resolvedQuotaKey = resolveQuotaKey(row);
-                    const quotaState = resolvedQuotaKey
-                      ? (codexQuota[resolvedQuotaKey] as CodexQuotaState | undefined)
-                      : undefined;
+                    const quotaState = getQuotaState(resolvedQuotaKey);
                     const quotaWindows = (quotaState?.windows ?? [])
                       .filter((window) => window.id === 'five-hour' || window.id === 'weekly')
                       .map((window) => ({

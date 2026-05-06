@@ -243,21 +243,22 @@ export function MonitoringCenterPage() {
         />
       </div>
 
+      <div className={styles.fullWidthSection}>
+        <MonitorCredentialStatsCard
+          usage={filteredUsage as UsagePayload | null}
+          windowUsageSource={usage}
+          loading={loading}
+          modelPrices={modelPrices}
+          authFiles={authFiles}
+        />
+      </div>
+
       <div className={styles.middleGrid}>
         <ModelStatsCard modelStats={modelStats} loading={loading} hasPrices={true} />
         <PriceSettingsCard
           modelNames={modelNames}
           modelPrices={modelPrices}
           onPricesChange={setModelPrices}
-        />
-      </div>
-
-      <div className={styles.fullWidthSection}>
-        <MonitorCredentialStatsCard
-          usage={filteredUsage as UsagePayload | null}
-          loading={loading}
-          modelPrices={modelPrices}
-          authFiles={authFiles}
         />
       </div>
 
