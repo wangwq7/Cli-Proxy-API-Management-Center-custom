@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import styles from './CodexKeeperPage.module.scss';
 
-const KEEPER_CONSOLE_PATH = '/keeper-console/';
+const KEEPER_CONSOLE_PATH = '/keeper-api/console';
 
 export function CodexKeeperPage() {
   const { t } = useTranslation();
