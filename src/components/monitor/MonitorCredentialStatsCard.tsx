@@ -38,6 +38,12 @@ type SortKey =
   | 'cost';
 type SortDir = 'asc' | 'desc';
 
+interface QuotaRefreshProgress {
+  done: number;
+  failed: number;
+  total: number;
+}
+
 interface MonitorCredentialStatsCardProps {
   usage: UsagePayload | null;
   windowUsageSource?: UsagePayload | null;
@@ -220,6 +226,7 @@ export function MonitorCredentialStatsCard({
   const { t } = useTranslation();
   const [refreshingKeys, setRefreshingKeys] = useState<Record<string, boolean>>({});
   const [refreshingAll, setRefreshingAll] = useState(false);
+  const [refreshProgress, setRefreshProgress] = useState<QuotaRefreshProgress | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('tokens');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [sortedRowKeys, setSortedRowKeys] = useState<string[]>([]);
@@ -230,12 +237,15 @@ export function MonitorCredentialStatsCard({
   const codexQuota = useQuotaStore((state) => state.codexQuota);
   const setCodexQuota = useQuotaStore((state) => state.setCodexQuota);
 
-  const loadKeeperQuotaCache = useCallback(async () => {
+  const loadKeeperQuotaCache = useCallback(async (): Promise<KeeperToken[]> => {
     try {
       const data = await keeperApi.listTokens(false);
-      setKeeperTokens(Array.isArray(data.tokens) ? data.tokens : []);
+      const tokens = Array.isArray(data.tokens) ? data.tokens : [];
+      setKeeperTokens(tokens);
+      return tokens;
     } catch {
       // Keeper cache is an optimization; failed auth/network must not block usage stats.
+      return [];
     }
   }, []);
 
@@ -399,9 +409,9 @@ export function MonitorCredentialStatsCard({
   );
 
   const refreshQuotaFile = useCallback(
-    async (authFile: AuthFileMeta) => {
+    async (authFile: AuthFileMeta): Promise<boolean> => {
       const quotaKey = authFile.name;
-      if (!quotaKey) return;
+      if (!quotaKey) return false;
 
       setRefreshingKeys((prev) => ({ ...prev, [quotaKey]: true }));
       setCodexQuota((prev) => ({
@@ -410,11 +420,37 @@ export function MonitorCredentialStatsCard({
       }));
 
       try {
-        const data = await CODEX_CONFIG.fetchQuota(authFile, t);
-        setCodexQuota((prev) => ({
-          ...prev,
-          [quotaKey]: CODEX_CONFIG.buildSuccessState(data)
-        }));
+        const result = await keeperApi.refreshTokenUsage([quotaKey]);
+        const tokens = await loadKeeperQuotaCache();
+        const token = tokens.find((item) => item.name === quotaKey);
+        const quota = token ? buildCachedCodexQuotaState(token, t) : null;
+        const error =
+          result.errors?.[quotaKey] ||
+          (Array.isArray(result.failed) && result.failed.includes(quotaKey)
+            ? t('notification.refresh_failed')
+            : '');
+
+        if (quota) {
+          setCodexQuota((prev) => ({
+            ...prev,
+            [quotaKey]: quota
+          }));
+        }
+
+        if (error || !quota) {
+          setCodexQuota((prev) => ({
+            ...prev,
+            [quotaKey]: CODEX_CONFIG.buildErrorState(
+              error ||
+                t('monitoring_center.quota_refresh_no_keeper_data', {
+                  defaultValue: 'Keeper 未返回额度数据'
+                })
+            )
+          }));
+          return false;
+        }
+
+        return true;
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : t('common.unknown_error');
         const status =
@@ -428,11 +464,12 @@ export function MonitorCredentialStatsCard({
             Number.isFinite(status) ? status : undefined
           )
         }));
+        return false;
       } finally {
         setRefreshingKeys((prev) => ({ ...prev, [quotaKey]: false }));
       }
     },
-    [setCodexQuota, t]
+    [loadKeeperQuotaCache, setCodexQuota, t]
   );
 
   const handleRefreshQuota = useCallback(
@@ -465,6 +502,7 @@ export function MonitorCredentialStatsCard({
     if (targets.length === 0) return;
 
     setRefreshingAll(true);
+    setRefreshProgress({ done: 0, failed: 0, total: targets.length });
     try {
       const queue = [...targets];
       const workerCount = Math.min(4, queue.length);
@@ -473,13 +511,23 @@ export function MonitorCredentialStatsCard({
           while (queue.length > 0) {
             const file = queue.shift();
             if (file) {
-              await refreshQuotaFile(file);
+              const ok = await refreshQuotaFile(file);
+              setRefreshProgress((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      done: Math.min(prev.total, prev.done + 1),
+                      failed: ok ? prev.failed : prev.failed + 1
+                    }
+                  : prev
+              );
             }
           }
         })
       );
     } finally {
       setRefreshingAll(false);
+      window.setTimeout(() => setRefreshProgress(null), 2000);
     }
   }, [authFiles, refreshQuotaFile]);
 
@@ -497,12 +545,10 @@ export function MonitorCredentialStatsCard({
   }, [keeperTokens, t]);
 
   const quotaByName = useMemo(() => {
-    const merged = new Map(cachedQuotaByName);
-    Object.entries(codexQuota).forEach(([name, state]) => {
-      if (state) {
-        merged.set(name, state);
-      }
-    });
+    const merged = new Map(Object.entries(codexQuota));
+    // Keeper sidecar is the persistent source shared with CodexKeeper inspection.
+    // Browser quota cache is kept only as a fallback while Keeper has no data.
+    cachedQuotaByName.forEach((state, name) => merged.set(name, state));
     return merged;
   }, [cachedQuotaByName, codexQuota]);
 
@@ -750,6 +796,10 @@ export function MonitorCredentialStatsCard({
   const ariaSort = (key: SortKey): 'none' | 'ascending' | 'descending' =>
     sortKey === key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none';
 
+  const refreshProgressPercent = refreshProgress?.total
+    ? Math.round((refreshProgress.done / refreshProgress.total) * 100)
+    : 0;
+
   return (
     <Card title={t('usage_stats.credential_stats')} className={`${styles.detailsFixedCard} ${styles.credentialStatsCard} ${styles.fullWidthSection}`}>
       <div className={styles.requestEventsToolbar}>
@@ -810,6 +860,38 @@ export function MonitorCredentialStatsCard({
           </Button>
         </div>
       </div>
+      {refreshProgress ? (
+        <div
+          className={styles.credentialRefreshProgress}
+          aria-label={t('monitoring_center.quota_refresh_progress', {
+            defaultValue: '额度刷新进度'
+          })}
+        >
+          <div className={styles.credentialRefreshProgressMeta}>
+            <span>
+              {t('monitoring_center.quota_refresh_progress_text', {
+                defaultValue: '额度刷新 {{done}}/{{total}}',
+                done: refreshProgress.done,
+                total: refreshProgress.total
+              })}
+            </span>
+            {refreshProgress.failed > 0 ? (
+              <span className={styles.credentialRefreshProgressFailed}>
+                {t('monitoring_center.quota_refresh_progress_failed', {
+                  defaultValue: '失败 {{count}}',
+                  count: refreshProgress.failed
+                })}
+              </span>
+            ) : null}
+          </div>
+          <div className={styles.credentialRefreshProgressTrack}>
+            <span
+              className={styles.credentialRefreshProgressBar}
+              style={{ width: `${refreshProgressPercent}%` }}
+            />
+          </div>
+        </div>
+      ) : null}
 
       {loading ? (
         <div className={styles.hint}>{t('common.loading')}</div>
