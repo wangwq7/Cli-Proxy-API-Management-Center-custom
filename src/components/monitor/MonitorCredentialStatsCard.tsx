@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -207,6 +207,9 @@ const getCredentialHealth = (file?: AuthFileMeta): CredentialHealth => {
   return 'normal';
 };
 
+const areStringArraysEqual = (a: string[], b: string[]) =>
+  a.length === b.length && a.every((item, index) => item === b[index]);
+
 export function MonitorCredentialStatsCard({
   usage,
   windowUsageSource,
@@ -216,11 +219,14 @@ export function MonitorCredentialStatsCard({
 }: MonitorCredentialStatsCardProps) {
   const { t } = useTranslation();
   const [refreshingKeys, setRefreshingKeys] = useState<Record<string, boolean>>({});
+  const [refreshingAll, setRefreshingAll] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>('tokens');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const [sortedRowKeys, setSortedRowKeys] = useState<string[]>([]);
   const [typeFilter, setTypeFilter] = useState(ALL_FILTER);
   const [searchTerm, setSearchTerm] = useState('');
   const [keeperTokens, setKeeperTokens] = useState<KeeperToken[]>([]);
+  const rowOrderSignatureRef = useRef('');
   const codexQuota = useQuotaStore((state) => state.codexQuota);
   const setCodexQuota = useQuotaStore((state) => state.setCodexQuota);
 
@@ -392,12 +398,10 @@ export function MonitorCredentialStatsCard({
     [authFiles, codexQuota]
   );
 
-  const handleRefreshQuota = useCallback(
-    async (row: CredentialRow) => {
-      const quotaKey = resolveQuotaKey(row);
+  const refreshQuotaFile = useCallback(
+    async (authFile: AuthFileMeta) => {
+      const quotaKey = authFile.name;
       if (!quotaKey) return;
-      const authFile = authFiles.find((file) => file.name === quotaKey);
-      if (!authFile) return;
 
       setRefreshingKeys((prev) => ({ ...prev, [quotaKey]: true }));
       setCodexQuota((prev) => ({
@@ -428,8 +432,56 @@ export function MonitorCredentialStatsCard({
         setRefreshingKeys((prev) => ({ ...prev, [quotaKey]: false }));
       }
     },
-    [authFiles, resolveQuotaKey, setCodexQuota, t]
+    [setCodexQuota, t]
   );
+
+  const handleRefreshQuota = useCallback(
+    async (row: CredentialRow) => {
+      const quotaKey = resolveQuotaKey(row);
+      if (!quotaKey) return;
+      const authFile = authFiles.find((file) => file.name === quotaKey);
+      if (!authFile) return;
+      await refreshQuotaFile(authFile);
+    },
+    [authFiles, refreshQuotaFile, resolveQuotaKey]
+  );
+
+  const refreshableQuotaCount = useMemo(
+    () =>
+      authFiles.filter((file) => isCodexAuthFile(file) && typeof file.name === 'string' && file.name.trim())
+        .length,
+    [authFiles]
+  );
+
+  const handleRefreshAllQuotas = useCallback(async () => {
+    const uniqueFiles = new Map<string, AuthFileMeta>();
+    authFiles.forEach((file) => {
+      const name = typeof file.name === 'string' ? file.name.trim() : '';
+      if (!name || !isCodexAuthFile(file) || uniqueFiles.has(name)) return;
+      uniqueFiles.set(name, file);
+    });
+
+    const targets = Array.from(uniqueFiles.values());
+    if (targets.length === 0) return;
+
+    setRefreshingAll(true);
+    try {
+      const queue = [...targets];
+      const workerCount = Math.min(4, queue.length);
+      await Promise.all(
+        Array.from({ length: workerCount }, async () => {
+          while (queue.length > 0) {
+            const file = queue.shift();
+            if (file) {
+              await refreshQuotaFile(file);
+            }
+          }
+        })
+      );
+    } finally {
+      setRefreshingAll(false);
+    }
+  }, [authFiles, refreshQuotaFile]);
 
   const cachedQuotaByName = useMemo(() => {
     const map = new Map<string, CodexQuotaState>();
@@ -582,18 +634,6 @@ export function MonitorCredentialStatsCard({
     [windowUsage]
   );
 
-  const handleSort = useCallback(
-    (key: SortKey) => {
-      if (sortKey === key) {
-        setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
-        return;
-      }
-      setSortKey(key);
-      setSortDir(key === 'displayName' || key === 'quotaRemaining' ? 'asc' : 'desc');
-    },
-    [sortKey]
-  );
-
   const getSortValue = useCallback(
     (row: CredentialRow, key: SortKey) => {
       if (key === 'displayName') {
@@ -610,41 +650,99 @@ export function MonitorCredentialStatsCard({
     [getQuotaRemainingSortValue, getWindowUsageSortValue]
   );
 
+  const sortRowsBy = useCallback(
+    (sourceRows: CredentialRow[], key: SortKey, dir: SortDir) => {
+      const direction = dir === 'asc' ? 1 : -1;
+      return [...sourceRows].sort((a, b) => {
+        const aValue = getSortValue(a, key);
+        const bValue = getSortValue(b, key);
+
+        if (typeof aValue === 'string' && typeof bValue === 'string') {
+          return direction * aValue.localeCompare(bValue);
+        }
+
+        if (
+          typeof aValue === 'object' &&
+          aValue !== null &&
+          typeof bValue === 'object' &&
+          bValue !== null
+        ) {
+          const aUsage = aValue as WindowUsageSortValue;
+          const bUsage = bValue as WindowUsageSortValue;
+          if (aUsage.hasData !== bUsage.hasData) {
+            return aUsage.hasData ? -1 : 1;
+          }
+          if (aUsage.tokens !== bUsage.tokens) {
+            return direction * (aUsage.tokens - bUsage.tokens);
+          }
+          return direction * (aUsage.requests - bUsage.requests);
+        }
+
+        if (aValue === null || bValue === null) {
+          if (aValue === null && bValue === null) return 0;
+          return aValue === null ? 1 : -1;
+        }
+
+        return direction * (Number(aValue) - Number(bValue));
+      });
+    },
+    [getSortValue]
+  );
+
+  const filteredRowKeySignature = useMemo(
+    () =>
+      filteredRows
+        .map((row) => row.key)
+        .sort((a, b) => a.localeCompare(b))
+        .join('\u0001'),
+    [filteredRows]
+  );
+
+  useEffect(() => {
+    if (rowOrderSignatureRef.current === filteredRowKeySignature && sortedRowKeys.length > 0) {
+      return;
+    }
+
+    const nextKeys = sortRowsBy(filteredRows, sortKey, sortDir).map((row) => row.key);
+    rowOrderSignatureRef.current = filteredRowKeySignature;
+    setSortedRowKeys((prev) => (areStringArraysEqual(prev, nextKeys) ? prev : nextKeys));
+  }, [filteredRowKeySignature, filteredRows, sortDir, sortKey, sortRowsBy, sortedRowKeys.length]);
+
+  const handleSort = useCallback(
+    (key: SortKey) => {
+      const nextDir: SortDir =
+        sortKey === key
+          ? sortDir === 'asc'
+            ? 'desc'
+            : 'asc'
+          : key === 'displayName' || key === 'quotaRemaining'
+            ? 'asc'
+            : 'desc';
+
+      setSortKey(key);
+      setSortDir(nextDir);
+      rowOrderSignatureRef.current = filteredRowKeySignature;
+      setSortedRowKeys(sortRowsBy(filteredRows, key, nextDir).map((row) => row.key));
+    },
+    [filteredRowKeySignature, filteredRows, sortDir, sortKey, sortRowsBy]
+  );
+
   const sortedRows = useMemo(() => {
-    const direction = sortDir === 'asc' ? 1 : -1;
-    return [...filteredRows].sort((a, b) => {
-      const aValue = getSortValue(a, sortKey);
-      const bValue = getSortValue(b, sortKey);
+    if (sortedRowKeys.length === 0) {
+      return sortRowsBy(filteredRows, sortKey, sortDir);
+    }
 
-      if (typeof aValue === 'string' && typeof bValue === 'string') {
-        return direction * aValue.localeCompare(bValue);
-      }
-
-      if (
-        typeof aValue === 'object' &&
-        aValue !== null &&
-        typeof bValue === 'object' &&
-        bValue !== null
-      ) {
-        const aUsage = aValue as WindowUsageSortValue;
-        const bUsage = bValue as WindowUsageSortValue;
-        if (aUsage.hasData !== bUsage.hasData) {
-          return aUsage.hasData ? -1 : 1;
-        }
-        if (aUsage.tokens !== bUsage.tokens) {
-          return direction * (aUsage.tokens - bUsage.tokens);
-        }
-        return direction * (aUsage.requests - bUsage.requests);
-      }
-
-      if (aValue === null || bValue === null) {
-        if (aValue === null && bValue === null) return 0;
-        return aValue === null ? 1 : -1;
-      }
-
-      return direction * (Number(aValue) - Number(bValue));
+    const rowByKey = new Map(filteredRows.map((row) => [row.key, row]));
+    const usedKeys = new Set<string>();
+    const orderedRows = sortedRowKeys.flatMap((key) => {
+      const row = rowByKey.get(key);
+      if (!row) return [];
+      usedKeys.add(key);
+      return [row];
     });
-  }, [filteredRows, getSortValue, sortDir, sortKey]);
+    const missingRows = filteredRows.filter((row) => !usedKeys.has(row.key));
+    return [...orderedRows, ...sortRowsBy(missingRows, sortKey, sortDir)];
+  }, [filteredRows, sortDir, sortKey, sortRowsBy, sortedRowKeys]);
 
   const arrow = (key: SortKey) =>
     sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
@@ -695,6 +793,21 @@ export function MonitorCredentialStatsCard({
               </span>
             </div>
           </div>
+        </div>
+        <div className={styles.credentialToolbarActions}>
+          <Button
+            variant="secondary"
+            size="sm"
+            className={styles.credentialRefreshAllButton}
+            loading={refreshingAll}
+            disabled={refreshableQuotaCount === 0}
+            onClick={() => void handleRefreshAllQuotas()}
+            title={t('monitoring_center.refresh_all_quota_hint', {
+              defaultValue: '刷新全部 Codex 凭证额度；只在你手动点击时请求远端额度'
+            })}
+          >
+            {t('monitoring_center.refresh_all_quota', { defaultValue: '一键刷新全部额度' })}
+          </Button>
         </div>
       </div>
 

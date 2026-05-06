@@ -374,6 +374,22 @@
   }
 }
 
+.credentialToolbarActions {
+  display: flex;
+  align-items: flex-end;
+  margin-left: auto;
+  min-height: 40px;
+}
+
+.credentialRefreshAllButton:global(.btn.btn-sm) {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .requestEventsFilterLabel {
   font-size: 12px;
   color: var(--text-secondary);
