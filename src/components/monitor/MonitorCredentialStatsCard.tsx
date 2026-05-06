@@ -30,6 +30,8 @@ const WEEK_SECONDS = 7 * 24 * 60 * 60;
 
 type SortKey =
   | 'displayName'
+  | 'quotaRemaining'
+  | 'windowUsage'
   | 'requests'
   | 'tokens'
   | 'successRate'
@@ -65,6 +67,12 @@ interface WindowUsageStats {
   resetLabel: string;
   requests: number | null;
   tokens: number | null;
+}
+
+interface WindowUsageSortValue {
+  tokens: number;
+  requests: number;
+  hasData: boolean;
 }
 
 type CredentialHealth = 'normal' | 'exhausted' | 'disabled';
@@ -534,6 +542,46 @@ export function MonitorCredentialStatsCard({
     return result;
   }, [getQuotaState, resolveQuotaKey, rowEvents, rows, t]);
 
+  const getQuotaRemainingSortValue = useCallback(
+    (row: CredentialRow) => {
+      const quotaState = getQuotaState(resolveQuotaKey(row));
+      const remainingValues = (quotaState?.windows ?? [])
+        .filter((window) => window.id === 'five-hour' || window.id === 'weekly')
+        .map((window) =>
+          typeof window.usedPercent === 'number'
+            ? Math.max(0, Math.min(100, 100 - window.usedPercent))
+            : null
+        )
+        .filter((value): value is number => value !== null);
+
+      return remainingValues.length > 0 ? Math.min(...remainingValues) : null;
+    },
+    [getQuotaState, resolveQuotaKey]
+  );
+
+  const getWindowUsageSortValue = useCallback(
+    (row: CredentialRow): WindowUsageSortValue => {
+      const stats = windowUsage.get(row.key) ?? [];
+      return stats.reduce<WindowUsageSortValue>(
+        (acc, item) => {
+          const tokens = item.tokens ?? 0;
+          const requests = item.requests ?? 0;
+          const hasData = item.tokens !== null || item.requests !== null;
+          if (
+            !acc.hasData ||
+            tokens > acc.tokens ||
+            (tokens === acc.tokens && requests > acc.requests)
+          ) {
+            return { tokens, requests, hasData };
+          }
+          return hasData ? { ...acc, hasData: true } : acc;
+        },
+        { tokens: 0, requests: 0, hasData: false }
+      );
+    },
+    [windowUsage]
+  );
+
   const handleSort = useCallback(
     (key: SortKey) => {
       if (sortKey === key) {
@@ -541,7 +589,7 @@ export function MonitorCredentialStatsCard({
         return;
       }
       setSortKey(key);
-      setSortDir(key === 'displayName' ? 'asc' : 'desc');
+      setSortDir(key === 'displayName' || key === 'quotaRemaining' ? 'asc' : 'desc');
     },
     [sortKey]
   );
@@ -551,9 +599,15 @@ export function MonitorCredentialStatsCard({
       if (key === 'displayName') {
         return row.displayName;
       }
+      if (key === 'quotaRemaining') {
+        return getQuotaRemainingSortValue(row);
+      }
+      if (key === 'windowUsage') {
+        return getWindowUsageSortValue(row);
+      }
       return row[key];
     },
-    []
+    [getQuotaRemainingSortValue, getWindowUsageSortValue]
   );
 
   const sortedRows = useMemo(() => {
@@ -564,6 +618,28 @@ export function MonitorCredentialStatsCard({
 
       if (typeof aValue === 'string' && typeof bValue === 'string') {
         return direction * aValue.localeCompare(bValue);
+      }
+
+      if (
+        typeof aValue === 'object' &&
+        aValue !== null &&
+        typeof bValue === 'object' &&
+        bValue !== null
+      ) {
+        const aUsage = aValue as WindowUsageSortValue;
+        const bUsage = bValue as WindowUsageSortValue;
+        if (aUsage.hasData !== bUsage.hasData) {
+          return aUsage.hasData ? -1 : 1;
+        }
+        if (aUsage.tokens !== bUsage.tokens) {
+          return direction * (aUsage.tokens - bUsage.tokens);
+        }
+        return direction * (aUsage.requests - bUsage.requests);
+      }
+
+      if (aValue === null || bValue === null) {
+        if (aValue === null && bValue === null) return 0;
+        return aValue === null ? 1 : -1;
       }
 
       return direction * (Number(aValue) - Number(bValue));
@@ -649,9 +725,25 @@ export function MonitorCredentialStatsCard({
                         {t('usage_stats.credential_name')}{arrow('displayName')}
                       </button>
                     </th>
-                    <th className={styles.credentialActionHeader}></th>
-                    <th className={styles.windowUsageColumn}>
-                      {t('monitoring_center.window_usage', { defaultValue: '窗口用量' })}
+                    <th className={`${styles.sortableHeader} ${styles.credentialActionHeader}`} aria-sort={ariaSort('quotaRemaining')}>
+                      <button
+                        type="button"
+                        className={styles.sortHeaderButton}
+                        onClick={() => handleSort('quotaRemaining')}
+                        title={t('monitoring_center.quota_remaining_sort_hint', { defaultValue: '按最紧张窗口的剩余额度排序' })}
+                      >
+                        {t('monitoring_center.quota_remaining', { defaultValue: '周/5h额度' })}{arrow('quotaRemaining')}
+                      </button>
+                    </th>
+                    <th className={`${styles.sortableHeader} ${styles.windowUsageColumn}`} aria-sort={ariaSort('windowUsage')}>
+                      <button
+                        type="button"
+                        className={styles.sortHeaderButton}
+                        onClick={() => handleSort('windowUsage')}
+                        title={t('monitoring_center.window_usage_sort_hint', { defaultValue: '按当前窗口内 Token 用量排序' })}
+                      >
+                        {t('monitoring_center.window_usage', { defaultValue: '窗口用量' })}{arrow('windowUsage')}
+                      </button>
                     </th>
                     <th className={`${styles.sortableHeader} ${styles.metricColumn}`} aria-sort={ariaSort('requests')}>
                       <button
