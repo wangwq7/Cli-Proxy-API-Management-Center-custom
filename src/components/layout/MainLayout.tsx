@@ -45,6 +45,7 @@ const sidebarIcons: Record<string, ReactNode> = {
   quota: <IconSidebarQuota size={18} />,
   usage: <IconSidebarUsage size={18} />,
   monitoring: <IconSidebarMonitoring size={18} />,
+  keeper: <IconSidebarAuthFiles size={18} />,
   config: <IconSidebarConfig size={18} />,
   logs: <IconSidebarLogs size={18} />,
   system: <IconSidebarSystem size={18} />,
@@ -391,6 +392,7 @@ export function MainLayout() {
     { path: '/quota', label: t('nav.quota_management'), icon: sidebarIcons.quota },
     { path: '/usage', label: t('nav.usage_stats'), icon: sidebarIcons.usage },
     { path: '/monitor', label: t('nav.monitoring_center'), icon: sidebarIcons.monitoring },
+    { path: '/keeper', label: t('nav.codex_keeper', { defaultValue: 'Codex Keeper' }), icon: sidebarIcons.keeper },
     ...(config?.loggingToFile
       ? [{ path: '/logs', label: t('nav.logs'), icon: sidebarIcons.logs }]
       : []),
