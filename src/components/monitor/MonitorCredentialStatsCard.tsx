@@ -124,8 +124,21 @@ const normalizePositiveNumber = (value: unknown): number | null => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 };
 
-const formatCachedResetLabel = (resetAtUnix: number | null) => {
-  if (!resetAtUnix) return '-';
+const formatUnixLabel = (unixSeconds: number | null) => {
+  if (!unixSeconds) return '-';
+  const date = new Date(unixSeconds * 1000);
+  return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString();
+};
+
+const formatCachedResetLabel = (
+  resetAtUnix: number | null,
+  t: ReturnType<typeof useTranslation>['t']
+) => {
+  if (!resetAtUnix) {
+    return t('monitoring_center.quota_reset_unavailable', {
+      defaultValue: '官方未返回下次恢复时间'
+    });
+  }
   const date = new Date(resetAtUnix * 1000);
   return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString();
 };
@@ -200,8 +213,10 @@ const buildCachedCodexQuotaState = (
       label: t(meta.labelKey),
       usedPercent,
       resetLabel: emptyRollingReset
-        ? t('monitoring_center.quota_no_pending_reset', { defaultValue: '无待恢复' })
-        : formatCachedResetLabel(resetAtUnix),
+        ? t('monitoring_center.quota_no_pending_reset', {
+            defaultValue: '当前无待恢复；官方未返回固定恢复时间'
+          })
+        : formatCachedResetLabel(resetAtUnix, t),
       resetAtUnix,
       checkedAtUnix,
       windowSeconds,
@@ -221,7 +236,7 @@ const toWindowRange = (
   windowMs: number | null,
   fallbackEndMs: number | null = null
 ) => {
-  const endMs = resetEndMs || fallbackEndMs;
+  const endMs = resetEndMs || fallbackEndMs || Date.now();
   if (!windowMs || !endMs || !Number.isFinite(endMs) || endMs <= 0) {
     return null;
   }
@@ -1038,7 +1053,8 @@ export function MonitorCredentialStatsCard({
                           typeof window.usedPercent === 'number'
                             ? Math.max(0, Math.min(100, Math.round(100 - window.usedPercent)))
                             : null,
-                        resetLabel: window.resetLabel
+                        resetLabel: window.resetLabel,
+                        checkedLabel: formatUnixLabel(window.checkedAtUnix ?? null)
                       }));
                     const windowStats = windowUsage.get(row.key) ?? [];
                     const isRefreshing = resolvedQuotaKey ? refreshingKeys[resolvedQuotaKey] === true : false;
@@ -1072,8 +1088,12 @@ export function MonitorCredentialStatsCard({
                                   {quotaWindows.map((window) => (
                                     <span
                                       key={window.id}
-                                      className={styles.quotaCircleItem}
-                                      title={`${window.label} - ${window.resetLabel}`}
+                                        className={styles.quotaCircleItem}
+                                      title={`${window.label} - ${window.resetLabel}${
+                                        window.checkedLabel !== '-'
+                                          ? `；额度检查时间：${window.checkedLabel}`
+                                          : ''
+                                      }`}
                                     >
                                       <span
                                         className={styles.quotaCircle}
