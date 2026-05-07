@@ -147,8 +147,10 @@ const isEmptyRollingReset = (
   usedPercent: number,
   resetAtUnix: number | null,
   checkedAtUnix: number | null,
-  windowSeconds: number | null
+  windowSeconds: number | null,
+  usageEndpoint?: string
 ) =>
+  usageEndpoint !== 'codex_usage' &&
   usedPercent <= 0 &&
   resetAtUnix !== null &&
   checkedAtUnix !== null &&
@@ -176,6 +178,8 @@ const buildCachedCodexQuotaState = (
 ): CodexQuotaState | null => {
   const usage = token.usage || {};
   const planType = typeof usage.plan_type === 'string' ? usage.plan_type : undefined;
+  const usageEndpoint =
+    typeof usage.usage_endpoint === 'string' ? usage.usage_endpoint : undefined;
   const checkedAtUnix = normalizePositiveNumber(usage.checked_at);
   const windows: CodexQuotaState['windows'] = [];
   const seen = new Set<string>();
@@ -205,7 +209,8 @@ const buildCachedCodexQuotaState = (
       usedPercent,
       resetAtRaw,
       checkedAtUnix,
-      windowSeconds
+      windowSeconds,
+      usageEndpoint
     );
     const resetAtUnix = emptyRollingReset ? null : resetAtRaw;
     windows.push({

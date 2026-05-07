@@ -27,6 +27,7 @@ export interface KeeperToken {
     secondary_used_percent?: number;
     secondary_window_seconds?: number | null;
     secondary_reset_at?: number | null;
+    usage_endpoint?: string;
     checked_at?: number;
     [key: string]: unknown;
   };
