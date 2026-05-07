@@ -19,6 +19,8 @@ import styles from './CodexKeeperPage.module.scss';
 const PAGE_SIZE = 10;
 const LOG_TAIL_LINES = 220;
 const IDLE_TOKEN_POLL_MS = 60_000;
+const KEEPER_TOKEN_CACHE_EVENT = 'keeper-token-cache-updated';
+const KEEPER_TOKEN_CACHE_VERSION_KEY = 'keeperTokenCacheVersion';
 
 type TokenHealthKey = 'good' | 'warn' | 'noquota' | 'expired' | 'unknown';
 type TokenFilter = 'all' | 'enabled' | 'disabled' | 'expired' | 'norefresh' | 'noquota' | 'unknown';
@@ -500,6 +502,28 @@ export function CodexKeeperPage() {
     });
     return rows;
   }, []);
+
+  useEffect(() => {
+    if (!authorized) return;
+
+    const reloadTokens = () => {
+      void loadTokens(false).catch((nextError) => {
+        if (!handleAuthFailure(nextError)) setError(formatError(nextError));
+      });
+    };
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === KEEPER_TOKEN_CACHE_VERSION_KEY) {
+        reloadTokens();
+      }
+    };
+
+    window.addEventListener(KEEPER_TOKEN_CACHE_EVENT, reloadTokens);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener(KEEPER_TOKEN_CACHE_EVENT, reloadTokens);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, [authorized, handleAuthFailure, loadTokens]);
 
   const loadDeletedTokens = useCallback(async () => {
     const data = await keeperApi.listDeletedTokens();

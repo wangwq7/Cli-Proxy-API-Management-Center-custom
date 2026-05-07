@@ -25,6 +25,8 @@ import styles from '@/pages/MonitoringCenterPage.module.scss';
 
 const ALL_FILTER = '__all__';
 const KEEPER_QUOTA_CACHE_POLL_MS = 60_000;
+const KEEPER_TOKEN_CACHE_EVENT = 'keeper-token-cache-updated';
+const KEEPER_TOKEN_CACHE_VERSION_KEY = 'keeperTokenCacheVersion';
 const FIVE_HOUR_SECONDS = 5 * 60 * 60;
 const WEEK_SECONDS = 7 * 24 * 60 * 60;
 
@@ -215,6 +217,16 @@ const getCredentialHealth = (file?: AuthFileMeta): CredentialHealth => {
 
 const areStringArraysEqual = (a: string[], b: string[]) =>
   a.length === b.length && a.every((item, index) => item === b[index]);
+
+const notifyKeeperTokenCacheUpdated = () => {
+  const version = String(Date.now());
+  window.dispatchEvent(new CustomEvent(KEEPER_TOKEN_CACHE_EVENT, { detail: { version } }));
+  try {
+    localStorage.setItem(KEEPER_TOKEN_CACHE_VERSION_KEY, version);
+  } catch {
+    // Ignore storage errors; same-tab listeners already received the event.
+  }
+};
 
 export function MonitorCredentialStatsCard({
   usage,
@@ -409,9 +421,10 @@ export function MonitorCredentialStatsCard({
   );
 
   const refreshQuotaFile = useCallback(
-    async (authFile: AuthFileMeta): Promise<boolean> => {
+    async (authFile: AuthFileMeta, notify = true): Promise<boolean> => {
       const quotaKey = authFile.name;
       if (!quotaKey) return false;
+      let touchedKeeperCache = false;
 
       setRefreshingKeys((prev) => ({ ...prev, [quotaKey]: true }));
       setCodexQuota((prev) => ({
@@ -421,6 +434,7 @@ export function MonitorCredentialStatsCard({
 
       try {
         const result = await keeperApi.refreshTokenUsage([quotaKey]);
+        touchedKeeperCache = true;
         const tokens = await loadKeeperQuotaCache();
         const token = tokens.find((item) => item.name === quotaKey);
         const quota = token ? buildCachedCodexQuotaState(token, t) : null;
@@ -467,6 +481,9 @@ export function MonitorCredentialStatsCard({
         return false;
       } finally {
         setRefreshingKeys((prev) => ({ ...prev, [quotaKey]: false }));
+        if (notify && touchedKeeperCache) {
+          notifyKeeperTokenCacheUpdated();
+        }
       }
     },
     [loadKeeperQuotaCache, setCodexQuota, t]
@@ -511,7 +528,7 @@ export function MonitorCredentialStatsCard({
           while (queue.length > 0) {
             const file = queue.shift();
             if (file) {
-              const ok = await refreshQuotaFile(file);
+              const ok = await refreshQuotaFile(file, false);
               setRefreshProgress((prev) =>
                 prev
                   ? {
@@ -527,6 +544,7 @@ export function MonitorCredentialStatsCard({
       );
     } finally {
       setRefreshingAll(false);
+      notifyKeeperTokenCacheUpdated();
       window.setTimeout(() => setRefreshProgress(null), 2000);
     }
   }, [authFiles, refreshQuotaFile]);
