@@ -412,6 +412,7 @@ export function CodexKeeperPage() {
   const runMapActiveRef = useRef(runMapActive);
   const runTokenSeqRef = useRef(runTokenSeq);
   const runIdRef = useRef(runId);
+  const externalTokenSeqRef = useRef(0);
   const lastTokenPollRef = useRef(0);
   const wasRunningRef = useRef(false);
   const baselineSummaryRef = useRef<TokenSummary | null>(null);
@@ -645,6 +646,29 @@ export function CodexKeeperPage() {
     });
   }, []);
 
+  const loadExternalTokenUpdates = useCallback(async () => {
+    const data = await keeperApi.getTokenUpdates(externalTokenSeqRef.current);
+    externalTokenSeqRef.current = data.seq ?? externalTokenSeqRef.current;
+    if (!data.updates?.length) return;
+
+    setTokens((prev) => {
+      const next = new Map(prev.map((token) => [tokenName(token), token]));
+      data.updates.forEach((event) => {
+        const name = String(event.token?.name || event.name || '');
+        if (!name) return;
+        if (event.token?.deleted === true) {
+          next.delete(name);
+          return;
+        }
+        const base = next.get(name) || ({ name } as KeeperToken);
+        next.set(name, { ...base, ...event.token, name });
+      });
+      return Array.from(next.values());
+    });
+    setTokenUpdatedAt(Date.now() / 1000);
+    lastTokenPollRef.current = Date.now();
+  }, []);
+
   const pollRuntime = useCallback(async () => {
     if (!authorized) return;
     try {
@@ -670,6 +694,8 @@ export function CodexKeeperPage() {
         baselineHealthMapRef.current = buildHealthMap(freshTokens);
       } else if (tokenDue) {
         await loadTokens(false);
+      } else {
+        await loadExternalTokenUpdates();
       }
       wasRunningRef.current = running;
     } catch (nextError) {
@@ -680,6 +706,7 @@ export function CodexKeeperPage() {
     handleAuthFailure,
     loadDeletedTokens,
     loadJob,
+    loadExternalTokenUpdates,
     loadTokenUpdates,
     loadTokens,
     startRunTokenMap,
