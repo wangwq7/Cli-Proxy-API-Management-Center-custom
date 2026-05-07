@@ -237,6 +237,7 @@ export interface CodexQuotaWindow {
   usedPercent: number | null;
   resetLabel: string;
   resetAtUnix?: number | null;
+  checkedAtUnix?: number | null;
   windowSeconds?: number | null;
   windowKind?: 'five-hour' | 'weekly' | 'other';
 }

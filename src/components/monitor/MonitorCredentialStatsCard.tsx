@@ -130,6 +130,18 @@ const formatCachedResetLabel = (resetAtUnix: number | null) => {
   return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString();
 };
 
+const isEmptyRollingReset = (
+  usedPercent: number,
+  resetAtUnix: number | null,
+  checkedAtUnix: number | null,
+  windowSeconds: number | null
+) =>
+  usedPercent <= 0 &&
+  resetAtUnix !== null &&
+  checkedAtUnix !== null &&
+  windowSeconds !== null &&
+  Math.abs(resetAtUnix - checkedAtUnix - windowSeconds) <= 300;
+
 const getCachedWindowMeta = (
   slot: 'primary' | 'secondary',
   windowSeconds: number | null
@@ -151,6 +163,7 @@ const buildCachedCodexQuotaState = (
 ): CodexQuotaState | null => {
   const usage = token.usage || {};
   const planType = typeof usage.plan_type === 'string' ? usage.plan_type : undefined;
+  const checkedAtUnix = normalizePositiveNumber(usage.checked_at);
   const windows: CodexQuotaState['windows'] = [];
   const seen = new Set<string>();
 
@@ -174,13 +187,23 @@ const buildCachedCodexQuotaState = (
     const meta = getCachedWindowMeta(item.slot, windowSeconds);
     if (seen.has(meta.id)) return;
     seen.add(meta.id);
-    const resetAtUnix = normalizePositiveNumber(item.resetAt);
+    const resetAtRaw = normalizePositiveNumber(item.resetAt);
+    const emptyRollingReset = isEmptyRollingReset(
+      usedPercent,
+      resetAtRaw,
+      checkedAtUnix,
+      windowSeconds
+    );
+    const resetAtUnix = emptyRollingReset ? null : resetAtRaw;
     windows.push({
       ...meta,
       label: t(meta.labelKey),
       usedPercent,
-      resetLabel: formatCachedResetLabel(resetAtUnix),
+      resetLabel: emptyRollingReset
+        ? t('monitoring_center.quota_no_pending_reset', { defaultValue: '无待恢复' })
+        : formatCachedResetLabel(resetAtUnix),
       resetAtUnix,
+      checkedAtUnix,
       windowSeconds,
     });
   });
@@ -193,7 +216,12 @@ const buildCachedCodexQuotaState = (
   };
 };
 
-const toWindowRange = (endMs: number | null, windowMs: number | null) => {
+const toWindowRange = (
+  resetEndMs: number | null,
+  windowMs: number | null,
+  fallbackEndMs: number | null = null
+) => {
+  const endMs = resetEndMs || fallbackEndMs;
   if (!windowMs || !endMs || !Number.isFinite(endMs) || endMs <= 0) {
     return null;
   }
@@ -621,7 +649,8 @@ export function MonitorCredentialStatsCard({
         .map((window) => {
           const range = toWindowRange(
             window.resetAtUnix ? window.resetAtUnix * 1000 : null,
-            getWindowDurationMs(window)
+            getWindowDurationMs(window),
+            window.checkedAtUnix ? window.checkedAtUnix * 1000 : null
           );
           const label = window.labelKey ? t(window.labelKey, window.labelParams ?? {}) : window.label;
           if (!range) {
