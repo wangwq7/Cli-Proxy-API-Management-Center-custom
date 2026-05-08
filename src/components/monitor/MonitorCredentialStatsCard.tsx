@@ -312,7 +312,17 @@ export function MonitorCredentialStatsCard({
   useEffect(() => {
     void loadKeeperQuotaCache();
     const timer = window.setInterval(() => void loadKeeperQuotaCache(), KEEPER_QUOTA_CACHE_POLL_MS);
-    return () => window.clearInterval(timer);
+    const reload = () => void loadKeeperQuotaCache();
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === KEEPER_TOKEN_CACHE_VERSION_KEY) reload();
+    };
+    window.addEventListener(KEEPER_TOKEN_CACHE_EVENT, reload);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener(KEEPER_TOKEN_CACHE_EVENT, reload);
+      window.removeEventListener('storage', handleStorage);
+    };
   }, [loadKeeperQuotaCache]);
 
   const rows = useMemo((): CredentialRow[] => {

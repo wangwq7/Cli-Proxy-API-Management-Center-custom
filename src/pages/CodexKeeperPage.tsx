@@ -169,6 +169,16 @@ const writeJson = (key: string, value: unknown) => {
   }
 };
 
+const notifyKeeperTokenCacheUpdated = () => {
+  const version = String(Date.now());
+  window.dispatchEvent(new CustomEvent(KEEPER_TOKEN_CACHE_EVENT, { detail: { version } }));
+  try {
+    localStorage.setItem(KEEPER_TOKEN_CACHE_VERSION_KEY, version);
+  } catch {
+    // Same-tab listeners already received the event.
+  }
+};
+
 const formatError = (error: unknown) => (error instanceof Error ? error.message : String(error || '请求失败'));
 
 const errorStatus = (error: unknown) =>
@@ -392,11 +402,9 @@ const usageText = (token: KeeperToken) => {
       (token.last_checked_at ? '本轮没有拿到 usage 额度数据' : '尚未保存 usage 额度数据');
     return `状态未知：${reason}`;
   }
-  const used = usageUsedPercent(token);
-  const remaining = used === null ? '-' : `${Math.max(0, Math.round(100 - used))}%`;
-  const quotaParts = windows.map((window) => `${window.label}: ${window.usedPercent}%`);
+  const quotaParts = windows.map((window) => `${window.label}: ${Math.max(0, Math.round(100 - window.usedPercent))}%`);
   const resetParts = windows.map((window) => `${window.label}: ${window.resetAt ? formatDateTime(window.resetAt) : '官方未返回'}`);
-  return `${quotaParts.join(' · ')} · 剩余: ${remaining} · 下次刷新: ${resetParts.join(' · ')}`;
+  return `剩余额度: ${quotaParts.join(' · ')}\n下次刷新: ${resetParts.join(' · ')}`;
 };
 
 const pendingRunToken = (token: KeeperToken): KeeperToken => ({
@@ -761,6 +769,7 @@ export function CodexKeeperPage() {
         setLastTokenDelta(delta);
         writeJson('keeperLastChangedTokens', changed);
         writeJson('keeperLastTokenDelta', delta);
+        notifyKeeperTokenCacheUpdated();
         baselineSummaryRef.current = afterSummary;
         baselineHealthMapRef.current = buildHealthMap(freshTokens);
       } else if (tokenDue) {
@@ -845,6 +854,7 @@ export function CodexKeeperPage() {
         const failed = new Set(result.failed || []);
         setSelectedTokens(failed);
         await Promise.all([loadTokens(false), loadDeletedTokens()]);
+        notifyKeeperTokenCacheUpdated();
         if (failed.size) {
           setError(`${label}完成：成功 ${result[successField]?.length || 0} 个，失败 ${failed.size} 个。`);
         }
