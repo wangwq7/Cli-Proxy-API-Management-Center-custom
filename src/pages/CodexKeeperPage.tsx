@@ -176,6 +176,18 @@ const errorStatus = (error: unknown) =>
 
 const isUnauthorized = (error: unknown) => errorStatus(error) === 401 || formatError(error).toLowerCase() === 'unauthorized';
 
+const isTransientNetworkError = (error: unknown) => {
+  const message = formatError(error).toLowerCase();
+  const code =
+    typeof error === 'object' && error !== null && 'code' in error ? String((error as { code?: unknown }).code || '') : '';
+  return (
+    code === 'ERR_NETWORK' ||
+    code === 'ECONNABORTED' ||
+    message === 'network error' ||
+    message.includes('timeout')
+  );
+};
+
 const tokenName = (token: KeeperToken) => String(token.name || '');
 
 const numericPercent = (value: unknown): number | null => {
@@ -699,7 +711,12 @@ export function CodexKeeperPage() {
       }
       wasRunningRef.current = running;
     } catch (nextError) {
-      if (!handleAuthFailure(nextError)) setError(formatError(nextError));
+      if (handleAuthFailure(nextError)) return;
+      if (isTransientNetworkError(nextError)) {
+        // Background polling is best-effort; do not show a top-level failure while the run itself is healthy.
+        return;
+      }
+      setError(formatError(nextError));
     }
   }, [
     authorized,
