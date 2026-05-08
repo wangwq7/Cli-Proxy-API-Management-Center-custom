@@ -230,10 +230,10 @@ const quotaWindowKind = (slot: 'primary' | 'secondary', label: string, windowSec
 const quotaWindowLabel = (slot: 'primary' | 'secondary', usage: KeeperToken['usage'], windowSeconds: number | null) => {
   const explicit =
     String(usageValue(usage, `${slot}_quota_label`) || usageValue(usage, `${slot}_window_label`) || '').trim();
-  if (explicit) return explicit;
-  if (windowSeconds === 604800) return 'Week';
-  if (windowSeconds === 18000) return '5h';
-  return slot === 'secondary' ? 'Week' : '额度';
+  const kind = quotaWindowKind(slot, explicit, windowSeconds);
+  if (kind === '5h') return '5h额度';
+  if (kind === 'week') return '周额度';
+  return explicit || '额度';
 };
 
 const usageWindows = (token: KeeperToken): KeeperUsageWindow[] => {
@@ -1110,7 +1110,7 @@ export function CodexKeeperPage() {
                       ].filter(Boolean).join(' ')}
                       title={[
                         `邮箱: ${token.email || '-'}`,
-                        `额度: ${usageText(token)}`,
+                        usageText(token),
                         `有效期: ${token.remaining || token.expiry || 'unknown'}`,
                         selected ? '已选中，点击取消' : '点击选中，可多选操作',
                       ].join('\n')}
