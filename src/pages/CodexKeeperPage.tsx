@@ -195,12 +195,71 @@ const numericPercent = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? Math.max(0, Math.min(100, parsed)) : null;
 };
 
-const usageUsedPercent = (token: KeeperToken): number | null => {
+const numericUnix = (value: unknown): number | null => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+
+interface KeeperUsageWindow {
+  key: string;
+  label: string;
+  usedPercent: number;
+  resetAt: number | null;
+}
+
+const usageValue = (usage: KeeperToken['usage'], key: string): unknown =>
+  usage && Object.prototype.hasOwnProperty.call(usage, key) ? usage[key] : undefined;
+
+const quotaWindowKind = (slot: 'primary' | 'secondary', label: string, windowSeconds: number | null) => {
+  const normalized = label.toLowerCase();
+  if (windowSeconds === 604800 || normalized.includes('week') || normalized.includes('周')) return 'week';
+  if (windowSeconds === 18000 || normalized.includes('5h') || normalized.includes('5 h') || normalized.includes('5小时')) return '5h';
+  return slot === 'secondary' ? 'week' : 'primary';
+};
+
+const quotaWindowLabel = (slot: 'primary' | 'secondary', usage: KeeperToken['usage'], windowSeconds: number | null) => {
+  const explicit =
+    String(usageValue(usage, `${slot}_quota_label`) || usageValue(usage, `${slot}_window_label`) || '').trim();
+  if (explicit) return explicit;
+  if (windowSeconds === 604800) return 'Week';
+  if (windowSeconds === 18000) return '5h';
+  return slot === 'secondary' ? 'Week' : '额度';
+};
+
+const usageWindows = (token: KeeperToken): KeeperUsageWindow[] => {
   const usage = token.usage || {};
-  const primary = numericPercent(usage.primary_used_percent);
-  const secondary = numericPercent(usage.secondary_used_percent);
-  if (secondary !== null) return Math.max(primary ?? 0, secondary);
-  return primary;
+  const planType = String(usage.plan_type || '').toLowerCase();
+  const windows: KeeperUsageWindow[] = [];
+  const seen = new Set<string>();
+
+  ([
+    ['primary', usage.primary_used_percent, usage.primary_window_seconds, usage.primary_reset_at],
+    ['secondary', usage.secondary_used_percent, usage.secondary_window_seconds, usage.secondary_reset_at],
+  ] as const).forEach(([slot, usedRaw, windowRaw, resetRaw]) => {
+    const usedPercent = numericPercent(usedRaw);
+    if (usedPercent === null) return;
+    const windowSeconds = numericUnix(windowRaw);
+    const label = quotaWindowLabel(slot, usage, windowSeconds);
+    const kind = quotaWindowKind(slot, label, windowSeconds);
+    if (planType === 'free' && kind === '5h') return;
+    const key = kind === 'primary' ? slot : kind;
+    if (seen.has(key)) return;
+    seen.add(key);
+    windows.push({
+      key,
+      label,
+      usedPercent,
+      resetAt: numericUnix(resetRaw),
+    });
+  });
+
+  return windows;
+};
+
+const usageUsedPercent = (token: KeeperToken): number | null => {
+  const windows = usageWindows(token);
+  if (!windows.length) return null;
+  return Math.max(...windows.map((window) => window.usedPercent));
 };
 
 const isExpired = (token: KeeperToken) =>
@@ -325,10 +384,8 @@ const cacheTimeText = (timestampSeconds?: number | null) => {
 };
 
 const usageText = (token: KeeperToken) => {
-  const usage = token.usage || {};
-  const primary = numericPercent(usage.primary_used_percent);
-  const secondary = numericPercent(usage.secondary_used_percent);
-  if (primary === null && secondary === null) {
+  const windows = usageWindows(token);
+  if (!windows.length) {
     const reason =
       token.last_check_error ||
       token.keeper_reason ||
@@ -337,7 +394,9 @@ const usageText = (token: KeeperToken) => {
   }
   const used = usageUsedPercent(token);
   const remaining = used === null ? '-' : `${Math.max(0, Math.round(100 - used))}%`;
-  return `5h: ${primary === null ? '-' : `${primary}%`} · Week: ${secondary === null ? '-' : `${secondary}%`} · 剩余: ${remaining}`;
+  const quotaParts = windows.map((window) => `${window.label}: ${window.usedPercent}%`);
+  const resetParts = windows.map((window) => `${window.label}: ${window.resetAt ? formatDateTime(window.resetAt) : '官方未返回'}`);
+  return `${quotaParts.join(' · ')} · 剩余: ${remaining} · 下次刷新: ${resetParts.join(' · ')}`;
 };
 
 const pendingRunToken = (token: KeeperToken): KeeperToken => ({
