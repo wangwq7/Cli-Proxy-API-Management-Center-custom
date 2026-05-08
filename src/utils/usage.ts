@@ -57,6 +57,10 @@ export interface UsageDetail {
   timestamp: string;
   source: string;
   auth_index: string | number | null;
+  reasoning_effort?: string;
+  service_tier?: string;
+  client_app?: string;
+  client_user_agent?: string;
   latency_ms?: number;
   tokens: {
     input_tokens: number;
@@ -558,6 +562,14 @@ export function collectUsageDetails(usageData: unknown): UsageDetail[] {
               detailRaw?.authIndex ??
               detailRaw?.AuthIndex ??
               null) as UsageDetail['auth_index'],
+          reasoning_effort: String(
+            detailRaw?.reasoning_effort ?? detailRaw?.reasoningEffort ?? ''
+          ).trim(),
+          service_tier: String(detailRaw?.service_tier ?? detailRaw?.serviceTier ?? '').trim(),
+          client_app: String(detailRaw?.client_app ?? detailRaw?.clientApp ?? '').trim(),
+          client_user_agent: String(
+            detailRaw?.client_user_agent ?? detailRaw?.clientUserAgent ?? ''
+          ).trim(),
           latency_ms: latencyMs ?? undefined,
           tokens: tokensRaw as unknown as UsageDetail['tokens'],
           failed: detailRaw.failed === true,
@@ -635,6 +647,14 @@ export function collectUsageDetailsWithEndpoint(usageData: unknown): UsageDetail
               detailRaw?.authIndex ??
               detailRaw?.AuthIndex ??
               null) as UsageDetail['auth_index'],
+          reasoning_effort: String(
+            detailRaw?.reasoning_effort ?? detailRaw?.reasoningEffort ?? ''
+          ).trim(),
+          service_tier: String(detailRaw?.service_tier ?? detailRaw?.serviceTier ?? '').trim(),
+          client_app: String(detailRaw?.client_app ?? detailRaw?.clientApp ?? '').trim(),
+          client_user_agent: String(
+            detailRaw?.client_user_agent ?? detailRaw?.clientUserAgent ?? ''
+          ).trim(),
           latency_ms: latencyMs ?? undefined,
           tokens: tokensRaw as unknown as UsageDetail['tokens'],
           failed: detailRaw.failed === true,

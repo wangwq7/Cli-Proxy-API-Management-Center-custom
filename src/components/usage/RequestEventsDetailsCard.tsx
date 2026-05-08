@@ -28,6 +28,7 @@ const ALL_FILTER = '__all__';
 const RESULT_SUCCESS_FILTER = 'success';
 const RESULT_FAILURE_FILTER = 'failure';
 const MAX_RENDERED_EVENTS = 500;
+const UNKNOWN_FILTER_VALUE = '__unknown__';
 
 type RequestEventRow = {
   id: string;
@@ -40,6 +41,10 @@ type RequestEventRow = {
   source: string;
   sourceType: string;
   authIndex: string;
+  reasoningEffort: string;
+  serviceTier: string;
+  clientApp: string;
+  clientUserAgent: string;
   failed: boolean;
   latencyMs: number | null;
   tps: number | null;
@@ -119,6 +124,9 @@ export function RequestEventsDetailsCard({
   const [sourceFilter, setSourceFilter] = useState(ALL_FILTER);
   const [authIndexFilter, setAuthIndexFilter] = useState(ALL_FILTER);
   const [resultFilter, setResultFilter] = useState(ALL_FILTER);
+  const [reasoningEffortFilter, setReasoningEffortFilter] = useState(ALL_FILTER);
+  const [serviceTierFilter, setServiceTierFilter] = useState(ALL_FILTER);
+  const [clientAppFilter, setClientAppFilter] = useState(ALL_FILTER);
   const [autoRefreshValue, setAutoRefreshValue] = useState<AutoRefreshValue>(AUTO_REFRESH_OFF);
   const [customAutoRefreshSeconds, setCustomAutoRefreshSeconds] = useState(
     DEFAULT_CUSTOM_AUTO_REFRESH_SECONDS.toString()
@@ -284,6 +292,10 @@ export function RequestEventsDetailsCard({
         );
         const latencyMs = extractLatencyMs(detail);
         const tps = latencyMs && latencyMs > 0 ? outputTokens / (latencyMs / 1000) : null;
+        const reasoningEffort = String(detail.reasoning_effort ?? '').trim();
+        const serviceTier = String(detail.service_tier ?? '').trim();
+        const clientApp = String(detail.client_app ?? '').trim();
+        const clientUserAgent = String(detail.client_user_agent ?? '').trim();
 
         return {
           id: `${timestamp}-${model}-${sourceKey}-${authIndex}-${index}`,
@@ -296,6 +308,10 @@ export function RequestEventsDetailsCard({
           source,
           sourceType,
           authIndex,
+          reasoningEffort,
+          serviceTier,
+          clientApp,
+          clientUserAgent,
           failed: detail.failed === true,
           latencyMs,
           tps,
@@ -391,6 +407,29 @@ export function RequestEventsDetailsCard({
     ],
     [t]
   );
+  const buildTextOptions = useCallback(
+    (values: string[]) => [
+      { value: ALL_FILTER, label: t('usage_stats.filter_all') },
+      { value: UNKNOWN_FILTER_VALUE, label: t('usage_stats.request_events_unknown') },
+      ...Array.from(new Set(values.filter((value) => value.trim()))).map((value) => ({
+        value,
+        label: value,
+      })),
+    ],
+    [t]
+  );
+  const reasoningEffortOptions = useMemo(
+    () => buildTextOptions(rows.map((row) => row.reasoningEffort)),
+    [buildTextOptions, rows]
+  );
+  const serviceTierOptions = useMemo(
+    () => buildTextOptions(rows.map((row) => row.serviceTier)),
+    [buildTextOptions, rows]
+  );
+  const clientAppOptions = useMemo(
+    () => buildTextOptions(rows.map((row) => row.clientApp)),
+    [buildTextOptions, rows]
+  );
 
   const modelOptionSet = useMemo(
     () => new Set(modelOptions.map((option) => option.value)),
@@ -408,6 +447,18 @@ export function RequestEventsDetailsCard({
     () => new Set(resultOptions.map((option) => option.value)),
     [resultOptions]
   );
+  const reasoningEffortOptionSet = useMemo(
+    () => new Set(reasoningEffortOptions.map((option) => option.value)),
+    [reasoningEffortOptions]
+  );
+  const serviceTierOptionSet = useMemo(
+    () => new Set(serviceTierOptions.map((option) => option.value)),
+    [serviceTierOptions]
+  );
+  const clientAppOptionSet = useMemo(
+    () => new Set(clientAppOptions.map((option) => option.value)),
+    [clientAppOptions]
+  );
 
   const effectiveModelFilter = modelOptionSet.has(modelFilter) ? modelFilter : ALL_FILTER;
   const effectiveSourceFilter = sourceOptionSet.has(sourceFilter) ? sourceFilter : ALL_FILTER;
@@ -415,10 +466,22 @@ export function RequestEventsDetailsCard({
     ? authIndexFilter
     : ALL_FILTER;
   const effectiveResultFilter = resultOptionSet.has(resultFilter) ? resultFilter : ALL_FILTER;
+  const effectiveReasoningEffortFilter = reasoningEffortOptionSet.has(reasoningEffortFilter)
+    ? reasoningEffortFilter
+    : ALL_FILTER;
+  const effectiveServiceTierFilter = serviceTierOptionSet.has(serviceTierFilter)
+    ? serviceTierFilter
+    : ALL_FILTER;
+  const effectiveClientAppFilter = clientAppOptionSet.has(clientAppFilter)
+    ? clientAppFilter
+    : ALL_FILTER;
 
   const filteredRows = useMemo(
     () =>
       rows.filter((row) => {
+        const matchesTextFilter = (value: string, filter: string) =>
+          filter === ALL_FILTER ||
+          (filter === UNKNOWN_FILTER_VALUE ? !value : value === filter);
         const modelMatched =
           effectiveModelFilter === ALL_FILTER || row.model === effectiveModelFilter;
         const sourceMatched =
@@ -428,9 +491,32 @@ export function RequestEventsDetailsCard({
         const resultMatched =
           effectiveResultFilter === ALL_FILTER ||
           (effectiveResultFilter === RESULT_FAILURE_FILTER ? row.failed : !row.failed);
-        return modelMatched && sourceMatched && authIndexMatched && resultMatched;
+        const reasoningEffortMatched = matchesTextFilter(
+          row.reasoningEffort,
+          effectiveReasoningEffortFilter
+        );
+        const serviceTierMatched = matchesTextFilter(row.serviceTier, effectiveServiceTierFilter);
+        const clientAppMatched = matchesTextFilter(row.clientApp, effectiveClientAppFilter);
+        return (
+          modelMatched &&
+          sourceMatched &&
+          authIndexMatched &&
+          resultMatched &&
+          reasoningEffortMatched &&
+          serviceTierMatched &&
+          clientAppMatched
+        );
       }),
-    [effectiveAuthIndexFilter, effectiveModelFilter, effectiveResultFilter, effectiveSourceFilter, rows]
+    [
+      effectiveAuthIndexFilter,
+      effectiveClientAppFilter,
+      effectiveModelFilter,
+      effectiveReasoningEffortFilter,
+      effectiveResultFilter,
+      effectiveServiceTierFilter,
+      effectiveSourceFilter,
+      rows,
+    ]
   );
 
   const renderedRows = useMemo(() => filteredRows.slice(0, MAX_RENDERED_EVENTS), [filteredRows]);
@@ -439,13 +525,19 @@ export function RequestEventsDetailsCard({
     effectiveModelFilter !== ALL_FILTER ||
     effectiveSourceFilter !== ALL_FILTER ||
     effectiveAuthIndexFilter !== ALL_FILTER ||
-    effectiveResultFilter !== ALL_FILTER;
+    effectiveResultFilter !== ALL_FILTER ||
+    effectiveReasoningEffortFilter !== ALL_FILTER ||
+    effectiveServiceTierFilter !== ALL_FILTER ||
+    effectiveClientAppFilter !== ALL_FILTER;
 
   const handleClearFilters = () => {
     setModelFilter(ALL_FILTER);
     setSourceFilter(ALL_FILTER);
     setAuthIndexFilter(ALL_FILTER);
     setResultFilter(ALL_FILTER);
+    setReasoningEffortFilter(ALL_FILTER);
+    setServiceTierFilter(ALL_FILTER);
+    setClientAppFilter(ALL_FILTER);
   };
 
   const handleExportCsv = () => {
@@ -457,6 +549,10 @@ export function RequestEventsDetailsCard({
       'source',
       'source_raw',
       'auth_index',
+      'reasoning_effort',
+      'service_tier',
+      'client_app',
+      'client_user_agent',
       'result',
       ...(hasLatencyData ? ['latency_ms', 'tps'] : []),
       'input_tokens',
@@ -473,6 +569,10 @@ export function RequestEventsDetailsCard({
         row.source,
         row.sourceRaw,
         row.authIndex,
+        row.reasoningEffort,
+        row.serviceTier,
+        row.clientApp,
+        row.clientUserAgent,
         row.failed ? 'failed' : 'success',
         ...(hasLatencyData
           ? [row.latencyMs ?? '', row.tps !== null ? row.tps.toFixed(2) : '']
@@ -504,6 +604,10 @@ export function RequestEventsDetailsCard({
       source: row.source,
       source_raw: row.sourceRaw,
       auth_index: row.authIndex,
+      reasoning_effort: row.reasoningEffort,
+      service_tier: row.serviceTier,
+      client_app: row.clientApp,
+      client_user_agent: row.clientUserAgent,
       failed: row.failed,
       ...(hasLatencyData && row.latencyMs !== null ? { latency_ms: row.latencyMs } : {}),
       ...(hasLatencyData && row.tps !== null ? { tps: row.tps } : {}),
@@ -617,6 +721,45 @@ export function RequestEventsDetailsCard({
             fullWidth={false}
           />
         </div>
+        <div className={styles.requestEventsFilterItem}>
+          <span className={styles.requestEventsFilterLabel}>
+            {t('usage_stats.request_events_filter_reasoning_effort')}
+          </span>
+          <Select
+            value={effectiveReasoningEffortFilter}
+            options={reasoningEffortOptions}
+            onChange={setReasoningEffortFilter}
+            className={styles.requestEventsSelect}
+            ariaLabel={t('usage_stats.request_events_filter_reasoning_effort')}
+            fullWidth={false}
+          />
+        </div>
+        <div className={styles.requestEventsFilterItem}>
+          <span className={styles.requestEventsFilterLabel}>
+            {t('usage_stats.request_events_filter_service_tier')}
+          </span>
+          <Select
+            value={effectiveServiceTierFilter}
+            options={serviceTierOptions}
+            onChange={setServiceTierFilter}
+            className={styles.requestEventsSelect}
+            ariaLabel={t('usage_stats.request_events_filter_service_tier')}
+            fullWidth={false}
+          />
+        </div>
+        <div className={styles.requestEventsFilterItem}>
+          <span className={styles.requestEventsFilterLabel}>
+            {t('usage_stats.request_events_filter_client_app')}
+          </span>
+          <Select
+            value={effectiveClientAppFilter}
+            options={clientAppOptions}
+            onChange={setClientAppFilter}
+            className={styles.requestEventsSelect}
+            ariaLabel={t('usage_stats.request_events_filter_client_app')}
+            fullWidth={false}
+          />
+        </div>
         {onRefresh && (
           <div className={styles.requestEventsFilterItem}>
             <span className={styles.requestEventsFilterLabelRow}>
@@ -687,6 +830,9 @@ export function RequestEventsDetailsCard({
                   <th>{t('usage_stats.model_name')}</th>
                   <th>{t('usage_stats.request_events_source')}</th>
                   <th>{t('usage_stats.request_events_auth_index')}</th>
+                  <th>{t('usage_stats.request_events_reasoning_effort')}</th>
+                  <th>{t('usage_stats.request_events_service_tier')}</th>
+                  <th>{t('usage_stats.request_events_client_app')}</th>
                   <th>{t('usage_stats.request_events_result')}</th>
                   {hasLatencyData && <th>{t('usage_stats.time')}</th>}
                   {hasLatencyData && <th>{t('usage_stats.request_events_tps')}</th>}
@@ -712,6 +858,11 @@ export function RequestEventsDetailsCard({
                     </td>
                     <td className={styles.requestEventsAuthIndex} title={row.authIndex}>
                       {row.authIndex}
+                    </td>
+                    <td>{row.reasoningEffort || t('usage_stats.request_events_unknown')}</td>
+                    <td>{row.serviceTier || t('usage_stats.request_events_unknown')}</td>
+                    <td title={row.clientUserAgent || row.clientApp}>
+                      {row.clientApp || t('usage_stats.request_events_unknown')}
                     </td>
                     <td>
                       {row.failed ? (
