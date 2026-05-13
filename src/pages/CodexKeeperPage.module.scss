@@ -238,6 +238,39 @@
   }
 }
 
+.mapLocator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0 0 12px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, #a855f7 24%, var(--border-color));
+  border-radius: $radius-md;
+  background:
+    linear-gradient(90deg, rgba(168, 85, 247, 0.1), rgba(168, 85, 247, 0)),
+    var(--bg-secondary);
+
+  :global(.btn) {
+    min-height: 34px;
+  }
+}
+
+.mapLocatorInput {
+  width: 280px;
+
+  @include mobile {
+    width: 100%;
+  }
+}
+
+.mapLocatorMessage {
+  color: #7c3aed;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
 .tokenMap {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(14px, 1fr));
@@ -272,6 +305,14 @@
   animation: pulseCell 1.35s ease-in-out infinite;
 }
 
+.tokenCellLocated {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid #c084fc;
+  outline-offset: 2px;
+  animation: locateCell 1.45s ease-in-out infinite;
+}
+
 @keyframes pulseCell {
   0%,
   100% {
@@ -279,6 +320,23 @@
   }
   50% {
     box-shadow: 0 0 0 5px color-mix(in srgb, var(--keeper-cell-color) 0%, transparent);
+  }
+}
+
+@keyframes locateCell {
+  0%,
+  100% {
+    transform: translateY(-1px) scale(1.08);
+    box-shadow:
+      0 0 0 0 rgba(168, 85, 247, 0.48),
+      0 0 10px rgba(168, 85, 247, 0.34);
+  }
+
+  50% {
+    transform: translateY(-2px) scale(1.2);
+    box-shadow:
+      0 0 0 7px rgba(168, 85, 247, 0),
+      0 0 18px rgba(168, 85, 247, 0.66);
   }
 }
 

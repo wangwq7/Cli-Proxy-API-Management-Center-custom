@@ -464,6 +464,9 @@ export function CodexKeeperPage() {
   const [deletedTokens, setDeletedTokens] = useState<KeeperToken[]>([]);
   const [tokenUpdatedAt, setTokenUpdatedAt] = useState<number | null>(null);
   const [deletedUpdatedAt, setDeletedUpdatedAt] = useState<number | null>(null);
+  const [mapEmailQuery, setMapEmailQuery] = useState('');
+  const [mapLocateMessage, setMapLocateMessage] = useState('');
+  const [locatedTokenNames, setLocatedTokenNames] = useState<Set<string>>(() => new Set());
   const [tokenQuery, setTokenQuery] = useState('');
   const [deletedQuery, setDeletedQuery] = useState('');
   const [tokenFilter, setTokenFilter] = useState<TokenFilter>('all');
@@ -497,6 +500,7 @@ export function CodexKeeperPage() {
   const baselineSummaryRef = useRef<TokenSummary | null>(null);
   const baselineHealthMapRef = useRef<Record<string, TokenHealthKey>>({});
   const logBodyRef = useRef<HTMLDivElement | null>(null);
+  const tokenCellRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
 
   useEffect(() => {
     tokensRef.current = tokens;
@@ -654,6 +658,15 @@ export function CodexKeeperPage() {
     }
     return lastChangedTokens;
   }, [displayMapTokens, lastChangedTokens, runMapActive, runTokenStates]);
+
+  useEffect(() => {
+    if (!locatedTokenNames.size) return;
+    const visibleNames = new Set(displayMapTokens.map(tokenName));
+    setLocatedTokenNames((prev) => {
+      const next = new Set(Array.from(prev).filter((name) => visibleNames.has(name)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [displayMapTokens, locatedTokenNames.size]);
 
   const filteredTokens = useMemo(() => {
     const query = tokenQuery.trim().toLowerCase();
@@ -836,6 +849,59 @@ export function CodexKeeperPage() {
       return next;
     });
   }, []);
+
+  const clearMapLocation = useCallback(() => {
+    setMapEmailQuery('');
+    setMapLocateMessage('');
+    setLocatedTokenNames(new Set());
+  }, []);
+
+  const handleMapEmailChange = useCallback((value: string) => {
+    setMapEmailQuery(value);
+    setMapLocateMessage('');
+    setLocatedTokenNames(new Set());
+  }, []);
+
+  const locateMapEmail = useCallback(() => {
+    const query = mapEmailQuery.trim().toLowerCase();
+    if (!query) {
+      clearMapLocation();
+      return;
+    }
+
+    const matched = displayMapTokens.filter((token) => {
+      const name = tokenName(token);
+      return Boolean(name) && String(token.email || '').toLowerCase().includes(query);
+    });
+    const nextNames = new Set(matched.map(tokenName));
+    setLocatedTokenNames(nextNames);
+
+    if (!nextNames.size) {
+      setMapLocateMessage('未找到匹配邮箱');
+      return;
+    }
+
+    setMapLocateMessage(`已定位 ${nextNames.size} 个小方块`);
+    const firstName = tokenName(matched[0]);
+    window.requestAnimationFrame(() => {
+      tokenCellRefs.current.get(firstName)?.scrollIntoView({
+        block: 'center',
+        inline: 'center',
+        behavior: 'smooth',
+      });
+    });
+  }, [clearMapLocation, displayMapTokens, mapEmailQuery]);
+
+  const handleTokenCellClick = useCallback(
+    (name: string) => {
+      selectToken(name);
+      if (locatedTokenNames.has(name)) {
+        setLocatedTokenNames(new Set());
+        setMapLocateMessage('');
+      }
+    },
+    [locatedTokenNames, selectToken]
+  );
 
   const runSelectedAction = useCallback(
     async (
@@ -1084,6 +1150,38 @@ export function CodexKeeperPage() {
                 <span className={styles.stamp}>{runMapActive ? '巡检实时更新中' : cacheTimeText(tokenUpdatedAt)}</span>
               </div>
 
+              <form
+                className={styles.mapLocator}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  locateMapEmail();
+                }}
+              >
+                <input
+                  type="search"
+                  className={`${styles.input} ${styles.mapLocatorInput}`}
+                  value={mapEmailQuery}
+                  placeholder="按邮箱定位小方块"
+                  aria-label="按邮箱定位小方块"
+                  spellCheck={false}
+                  onChange={(event) => handleMapEmailChange(event.target.value)}
+                />
+                <Button
+                  type="submit"
+                  variant="secondary"
+                  size="sm"
+                  disabled={!mapEmailQuery.trim() || displayMapTokens.length === 0}
+                >
+                  定位
+                </Button>
+                {(mapEmailQuery || locatedTokenNames.size > 0 || mapLocateMessage) && (
+                  <Button type="button" variant="ghost" size="sm" onClick={clearMapLocation}>
+                    清除
+                  </Button>
+                )}
+                {mapLocateMessage && <span className={styles.mapLocatorMessage}>{mapLocateMessage}</span>}
+              </form>
+
               <div className={styles.legend}>
                 <span><i className={styles.healthGood} />健康 {mapSummary.good}</span>
                 <span><i className={styles.healthWarn} />良好 {mapSummary.warn}</span>
@@ -1098,15 +1196,21 @@ export function CodexKeeperPage() {
                   const health = tokenHealth(token);
                   const selected = selectedTokens.has(name);
                   const changed = changedForMap.has(name);
+                  const located = locatedTokenNames.has(name);
                   return (
                     <button
                       key={name}
                       type="button"
+                      ref={(element) => {
+                        if (element) tokenCellRefs.current.set(name, element);
+                        else tokenCellRefs.current.delete(name);
+                      }}
                       className={[
                         styles.tokenCell,
                         health.className,
                         selected ? styles.tokenCellSelected : '',
                         changed ? styles.tokenCellChanged : '',
+                        located ? styles.tokenCellLocated : '',
                       ].filter(Boolean).join(' ')}
                       title={[
                         `邮箱: ${token.email || '-'}`,
@@ -1115,7 +1219,7 @@ export function CodexKeeperPage() {
                         selected ? '已选中，点击取消' : '点击选中，可多选操作',
                       ].join('\n')}
                       aria-label={`${health.label}: ${token.email || name}`}
-                      onClick={() => selectToken(name)}
+                      onClick={() => handleTokenCellClick(name)}
                     />
                   );
                 })}
