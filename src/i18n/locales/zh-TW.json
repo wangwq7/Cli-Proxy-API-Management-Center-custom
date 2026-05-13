@@ -1047,6 +1047,7 @@
     "request_events_title": "請求事件明細",
     "request_events_filter_model": "模型",
     "request_events_filter_source": "來源",
+    "request_events_filter_source_placeholder": "搜尋來源",
     "request_events_filter_auth_index": "驗證索引",
     "request_events_filter_result": "結果",
     "request_events_filter_reasoning_effort": "思考強度",

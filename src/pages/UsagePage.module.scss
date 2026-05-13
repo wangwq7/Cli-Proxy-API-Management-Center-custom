@@ -1006,6 +1006,19 @@
   min-width: 180px;
 }
 
+.requestEventsSourceSearch {
+  width: 220px;
+  height: 40px;
+  margin: 0;
+  padding: 7px 10px;
+  line-height: 24px;
+  box-sizing: border-box;
+  font-size: 13px;
+  font-weight: 500;
+  background-color: var(--bg-primary);
+  box-shadow: var(--shadow);
+}
+
 .requestEventsAutoRefreshControls {
   display: inline-flex;
   align-items: center;

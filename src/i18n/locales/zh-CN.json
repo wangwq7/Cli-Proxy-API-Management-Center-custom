@@ -1040,6 +1040,7 @@
     "request_events_title": "请求事件明细",
     "request_events_filter_model": "模型",
     "request_events_filter_source": "来源",
+    "request_events_filter_source_placeholder": "搜索来源",
     "request_events_filter_auth_index": "认证索引",
     "request_events_filter_result": "结果",
     "request_events_filter_reasoning_effort": "思考强度",

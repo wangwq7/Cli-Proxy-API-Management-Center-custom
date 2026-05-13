@@ -121,7 +121,7 @@ export function RequestEventsDetailsCard({
   const { t, i18n } = useTranslation();
 
   const [modelFilter, setModelFilter] = useState(ALL_FILTER);
-  const [sourceFilter, setSourceFilter] = useState(ALL_FILTER);
+  const [sourceSearch, setSourceSearch] = useState('');
   const [authIndexFilter, setAuthIndexFilter] = useState(ALL_FILTER);
   const [resultFilter, setResultFilter] = useState(ALL_FILTER);
   const [reasoningEffortFilter, setReasoningEffortFilter] = useState(ALL_FILTER);
@@ -372,23 +372,6 @@ export function RequestEventsDetailsCard({
     [rows, t]
   );
 
-  const sourceOptions = useMemo(() => {
-    const optionMap = new Map<string, string>();
-    rows.forEach((row) => {
-      if (!optionMap.has(row.sourceKey)) {
-        optionMap.set(row.sourceKey, row.source);
-      }
-    });
-
-    return [
-      { value: ALL_FILTER, label: t('usage_stats.filter_all') },
-      ...Array.from(optionMap.entries()).map(([value, label]) => ({
-        value,
-        label,
-      })),
-    ];
-  }, [rows, t]);
-
   const authIndexOptions = useMemo(
     () => [
       { value: ALL_FILTER, label: t('usage_stats.filter_all') },
@@ -435,10 +418,6 @@ export function RequestEventsDetailsCard({
     () => new Set(modelOptions.map((option) => option.value)),
     [modelOptions]
   );
-  const sourceOptionSet = useMemo(
-    () => new Set(sourceOptions.map((option) => option.value)),
-    [sourceOptions]
-  );
   const authIndexOptionSet = useMemo(
     () => new Set(authIndexOptions.map((option) => option.value)),
     [authIndexOptions]
@@ -461,7 +440,6 @@ export function RequestEventsDetailsCard({
   );
 
   const effectiveModelFilter = modelOptionSet.has(modelFilter) ? modelFilter : ALL_FILTER;
-  const effectiveSourceFilter = sourceOptionSet.has(sourceFilter) ? sourceFilter : ALL_FILTER;
   const effectiveAuthIndexFilter = authIndexOptionSet.has(authIndexFilter)
     ? authIndexFilter
     : ALL_FILTER;
@@ -475,6 +453,7 @@ export function RequestEventsDetailsCard({
   const effectiveClientAppFilter = clientAppOptionSet.has(clientAppFilter)
     ? clientAppFilter
     : ALL_FILTER;
+  const normalizedSourceSearch = sourceSearch.trim().toLocaleLowerCase();
 
   const filteredRows = useMemo(
     () =>
@@ -485,7 +464,17 @@ export function RequestEventsDetailsCard({
         const modelMatched =
           effectiveModelFilter === ALL_FILTER || row.model === effectiveModelFilter;
         const sourceMatched =
-          effectiveSourceFilter === ALL_FILTER || row.sourceKey === effectiveSourceFilter;
+          !normalizedSourceSearch ||
+          [
+            row.source,
+            row.sourceRaw,
+            row.sourceKey,
+            row.sourceType,
+            row.authIndex,
+          ]
+            .join(' ')
+            .toLocaleLowerCase()
+            .includes(normalizedSourceSearch);
         const authIndexMatched =
           effectiveAuthIndexFilter === ALL_FILTER || row.authIndex === effectiveAuthIndexFilter;
         const resultMatched =
@@ -514,7 +503,7 @@ export function RequestEventsDetailsCard({
       effectiveReasoningEffortFilter,
       effectiveResultFilter,
       effectiveServiceTierFilter,
-      effectiveSourceFilter,
+      normalizedSourceSearch,
       rows,
     ]
   );
@@ -523,7 +512,7 @@ export function RequestEventsDetailsCard({
 
   const hasActiveFilters =
     effectiveModelFilter !== ALL_FILTER ||
-    effectiveSourceFilter !== ALL_FILTER ||
+    sourceSearch.trim() !== '' ||
     effectiveAuthIndexFilter !== ALL_FILTER ||
     effectiveResultFilter !== ALL_FILTER ||
     effectiveReasoningEffortFilter !== ALL_FILTER ||
@@ -532,7 +521,7 @@ export function RequestEventsDetailsCard({
 
   const handleClearFilters = () => {
     setModelFilter(ALL_FILTER);
-    setSourceFilter(ALL_FILTER);
+    setSourceSearch('');
     setAuthIndexFilter(ALL_FILTER);
     setResultFilter(ALL_FILTER);
     setReasoningEffortFilter(ALL_FILTER);
@@ -686,13 +675,14 @@ export function RequestEventsDetailsCard({
           <span className={styles.requestEventsFilterLabel}>
             {t('usage_stats.request_events_filter_source')}
           </span>
-          <Select
-            value={effectiveSourceFilter}
-            options={sourceOptions}
-            onChange={setSourceFilter}
-            className={styles.requestEventsSelect}
-            ariaLabel={t('usage_stats.request_events_filter_source')}
-            fullWidth={false}
+          <input
+            type="search"
+            value={sourceSearch}
+            onChange={(event) => setSourceSearch(event.target.value)}
+            className={`input ${styles.requestEventsSourceSearch}`}
+            aria-label={t('usage_stats.request_events_filter_source')}
+            placeholder={t('usage_stats.request_events_filter_source_placeholder')}
+            spellCheck={false}
           />
         </div>
         <div className={styles.requestEventsFilterItem}>
