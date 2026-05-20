@@ -121,7 +121,10 @@ export function MonitoringCenterPage() {
   useHeaderRefresh(handleRefresh);
 
   useEffect(() => {
-    void loadAuthFiles().catch(() => {});
+    const timeoutId = window.setTimeout(() => {
+      void loadAuthFiles().catch(() => {});
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [loadAuthFiles]);
 
   const [timeRange, setTimeRange] = useState<UsageTimeRange>(loadTimeRange);

@@ -152,14 +152,20 @@ export function RequestEventsDetailsCard({
 
   useEffect(() => {
     if (authFiles) return;
-    void refreshAuthFiles();
+    const timeoutId = window.setTimeout(() => {
+      void refreshAuthFiles();
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [authFiles, refreshAuthFiles]);
 
   useEffect(() => {
     if (authFiles || !lastRefreshedAt) {
       return;
     }
-    void refreshAuthFiles();
+    const timeoutId = window.setTimeout(() => {
+      void refreshAuthFiles();
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [authFiles, lastRefreshedAt, refreshAuthFiles]);
 
   const authFileMap = useMemo(() => {
@@ -214,19 +220,22 @@ export function RequestEventsDetailsCard({
   }, [autoRefreshValue, normalizedCustomAutoRefreshSeconds, onRefresh]);
 
   useEffect(() => {
-    if (!autoRefreshDelay) {
-      setNextRefreshAtMs(null);
-      return;
-    }
+    const timeoutId = window.setTimeout(() => {
+      if (!autoRefreshDelay) {
+        setNextRefreshAtMs(null);
+        return;
+      }
 
-    const now = Date.now();
-    setCountdownNowMs(now);
+      const now = Date.now();
+      setCountdownNowMs(now);
 
-    const nextFromRefresh = lastRefreshedAt ? lastRefreshedAt.getTime() + autoRefreshDelay : null;
-    const nextRefreshAt =
-      nextFromRefresh && nextFromRefresh > now ? nextFromRefresh : now + autoRefreshDelay;
+      const nextFromRefresh = lastRefreshedAt ? lastRefreshedAt.getTime() + autoRefreshDelay : null;
+      const nextRefreshAt =
+        nextFromRefresh && nextFromRefresh > now ? nextFromRefresh : now + autoRefreshDelay;
 
-    setNextRefreshAtMs(nextRefreshAt);
+      setNextRefreshAtMs(nextRefreshAt);
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [autoRefreshDelay, lastRefreshedAt]);
 
   useInterval(() => {

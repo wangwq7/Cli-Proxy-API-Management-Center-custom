@@ -78,11 +78,14 @@ export function LogsPage() {
   const [logState, setLogState] = useState<LogState>({ buffer: [], visibleFrom: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useLocalStorage('logsPage.autoRefresh', false);
   const [searchQuery, setSearchQuery] = useState('');
   const deferredSearchQuery = useDeferredValue(searchQuery);
-  const [hideManagementLogs, setHideManagementLogs] = useState(true);
-  const [showRawLogs, setShowRawLogs] = useState(false);
+  const [hideManagementLogs, setHideManagementLogs] = useLocalStorage(
+    'logsPage.hideManagementLogs',
+    true
+  );
+  const [showRawLogs, setShowRawLogs] = useLocalStorage('logsPage.showRawLogs', false);
   const [structuredFiltersExpanded, setStructuredFiltersExpanded] = useLocalStorage(
     'logsPage.structuredFiltersExpanded',
     true
@@ -97,7 +100,7 @@ export function LogsPage() {
     traceScopeKey,
     connectionStatus,
     config,
-    requestLogDownloading
+    requestLogDownloading,
   });
 
   const logScrollerRef = useRef<ReturnType<typeof useLogScroller> | null>(null);
@@ -1033,7 +1036,7 @@ export function LogsPage() {
                         {candidate.timeDeltaMs !== null && (
                           <span className={styles.traceDelta}>
                             {t('logs.trace_delta_seconds', {
-                              seconds: (candidate.timeDeltaMs / 1000).toFixed(2)
+                              seconds: (candidate.timeDeltaMs / 1000).toFixed(2),
                             })}
                           </span>
                         )}
@@ -1041,34 +1044,38 @@ export function LogsPage() {
                       <div className={styles.traceCandidateGrid}>
                         <div className={styles.traceInfoItem}>
                           <span className={styles.traceInfoLabel}>{t('logs.trace_endpoint')}</span>
-                          <span className={styles.traceInfoValue}>{candidate.detail.__endpoint}</span>
+                          <span className={styles.traceInfoValue}>
+                            {candidate.detail.__endpoint}
+                          </span>
                         </div>
                         <div className={styles.traceInfoItem}>
                           <span className={styles.traceInfoLabel}>{t('logs.trace_model')}</span>
-                          <span className={styles.traceInfoValue}>{candidate.detail.__modelName || '-'}</span>
+                          <span className={styles.traceInfoValue}>
+                            {candidate.detail.__modelName || '-'}
+                          </span>
                         </div>
                         <div className={styles.traceInfoItem}>
                           <span className={styles.traceInfoLabel}>{t('logs.trace_source')}</span>
                           <span
                             className={styles.traceInfoValue}
-                            title={String(candidate.detail.source || '-')}
+                            title={String(candidate.detail.source ?? '')}
                           >
-                            <span>{sourceInfo.displayName}</span>
-                            {sourceInfo.type && (
+                            {sourceInfo.displayName}
+                            {sourceInfo.type ? (
                               <span className={styles.traceSourceType}>{sourceInfo.type}</span>
-                            )}
+                            ) : null}
                           </span>
                         </div>
                         <div className={styles.traceInfoItem}>
                           <span className={styles.traceInfoLabel}>{t('logs.trace_auth_index')}</span>
                           <span className={styles.traceInfoValue}>
-                            {candidate.detail.auth_index ?? '-'}
+                            {String(candidate.detail.auth_index ?? '-')}
                           </span>
                         </div>
                         <div className={styles.traceInfoItem}>
                           <span className={styles.traceInfoLabel}>{t('logs.trace_timestamp')}</span>
                           <span className={styles.traceInfoValue}>
-                            {candidate.detail.timestamp || '-'}
+                            {String(candidate.detail.timestamp ?? '-')}
                           </span>
                         </div>
                         <div className={styles.traceInfoItem}>
